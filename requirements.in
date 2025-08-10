@@ -1,0 +1,40 @@
+# Data manipulation
+pandas
+polars
+numpy
+scipy
+
+# Visualization
+matplotlib
+seaborn
+plotly
+
+# Machine learning
+scikit-learn
+keras
+torch
+torchvision
+
+# Jupyter
+jupyter
+jupyterlab
+ipywidgets
+
+# Data I/O
+openpyxl
+requests
+beautifulsoup4
+
+# Statistics & Time Series
+statsmodels
+prophet
+
+# Data validation
+pydantic
+
+# Database & Big Data
+sqlalchemy
+dask
+
+# Performance
+numba
