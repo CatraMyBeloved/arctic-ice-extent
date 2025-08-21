@@ -1,174 +1,286 @@
-# **Sea Ice Extent Anomaly Forecasting – Project Plan**
+# **Sea Ice Extent Anomaly Forecasting – Learning-Focused Project Plan (Revised)**
 
-## 1. **Goal**
+## 1. **Overall Goal**
 
-Build a system that uses NSIDC and ERA5 data to predict **Arctic sea ice extent anomaly** at multiple forecast horizons (daily, weekly, monthly), using a tiered aggregation approach and sequence models (LSTMs).
-
----
-
-## 2. **Data Sources**
-
-### 2.1 NSIDC
-
-* **Primary**: Sea ice concentration (GeoTIFF) and shapefiles (daily, polar stereographic).
-* **Derived**:
-
-  * Extent (≥15% SIC threshold) aggregated over:
-
-    * Pan-Arctic
-    * Standard basin/sea regions
-    * Edge bands (iceward/oceanward belts)
-  * Climatology (1991–2020) for extent to compute anomalies.
-
-### 2.2 ERA5 (via Google Cloud Zarr)
-
-* **Variables** (initial list):
-
-  * 2m temperature (`t2m`)
-  * Sea surface temperature (`sst`)
-  * 10m winds (`u10`, `v10`)
-  * Mean sea-level pressure (`msl`)
-  * Total precipitation (`tp`) *(optional initially)*
-* **Derived features**:
-
-  * Area-weighted means, percentiles, std. dev.
-  * Anomalies vs. climatology
-  * Rolling windows (7, 30, 90 days)
-  * Lags (t−1, t−7, t−30)
-  * Wind speed, wind curl, temperature–SST contrast
+Build a complete pipeline for **Arctic sea ice extent anomaly forecasting** that emphasizes *learning* geospatial-temporal workflows, databases, data storage formats, and machine learning.
+Performance is secondary; the main goal is to **understand tools, data, and methods**, and to properly document the journey.
 
 ---
 
-## 3. **System Architecture**
+## 2. **Learning Goals**
 
-### 3.1 Storage
+1. Work with geospatial-temporal data in Python
+2. Create a GIS-capable database using PostgreSQL/PostGIS
+3. Learn to work with **xarray**, **dask**, and **Zarr** cloud files
+4. Learn to use **Parquet** for efficient feature storage
+5. Perform exploratory data analysis (EDA) for geospatial-timeseries
+6. Fit simple ML models on the data (linear, penalized, tree ensembles)
+7. Implement time-series specific models with lagged features and backtesting
+8. Prototype an LSTM on the dataset (learning exercise, not performance-driven)
+9. Evaluate predictions with appropriate metrics for geospatial-timeseries
 
-* **Raw data**: Public GCS buckets (ERA5 Zarr), NSIDC GeoTIFFs/shapefiles in object storage.
-* **PostgreSQL + PostGIS**:
-
-  * Stores geometry definitions for regions & edge bands
-  * Metadata/versioning for spatial definitions
-  * Joins spatial/temporal IDs but does not store raw rasters
-* **Parquet feature store**:
-
-  * Partitioned by `horizon`, `tier`, `region_id`, `year`
-  * Contains compact, ready-to-train daily records
-
-### 3.2 Tiers of Aggregation
-
-1. **Tier A** – Pan-Arctic (single region)
-2. **Tier B** – Basins/seas (multi-region)
-3. **Tier C** – Edge bands (dynamic per date; optional per region)
+*Secondary goal*: develop a basic understanding of Arctic seasonal cycles and anomaly patterns.
 
 ---
 
-## 4. **Processing Pipeline**
+## 3. **Data Sources**
 
-### Step 1 – Region definitions (PostGIS)
+### 3.1 NSIDC (Sea Ice Concentration, daily GeoTIFF/shapefile)
 
-* Load polygons for:
+* **Derived products**:
 
-  * Entire Arctic (Tier A)
-  * Basins/seas (Tier B)
-  * Ocean mask for edge band clipping
-* Store as `regions` table with valid date ranges.
+  * Sea ice extent (≥15% SIC threshold, using area-per-pixel grid)
+  * Daily climatology (1991–2020) for anomalies
+* **Storage**: Raw GeoTIFFs → PostGIS (with metadata, polygons, extent timeseries)
 
-### Step 2 – Edge detection (for Tier C)
+### 3.2 ERA5 (Zarr on Google Cloud)
 
-* From daily NSIDC concentration:
+* **Start with 3 variables**: 2m temperature (`t2m`), sea surface temperature (`sst`), mean sea-level pressure (`msl`)
+* **Features (pan-Arctic, later regional)**:
 
-  * Extract ice edge (15% contour)
-  * Compute signed distance transform
-  * Create inner/outer 250 km bands
-* Store in `edge_bands` table (geometry per date, side, region).
-
-### Step 3 – ERA5 aggregation
-
-* Open ERA5 Zarr lazily via xarray/dask in cloud.
-* Spatially subset to Arctic region.
-* Aggregate ERA5 vars over each geometry (Tier A, B, C).
-* Compute stats, anomalies, lags, and rolling windows.
-
-### Step 4 – Feature store creation
-
-* Write daily features per `(date, region_id, tier, horizon)` to Parquet.
-* Partition for fast queries and training.
-* Include target variables (`sie_anom_target`, `sie_raw`, `sie_clim`).
+  * Mean, anomaly, 15th percentile, 85th percentile
+  * Add lags (`t-1`, `t-7`, `t-30`) and rolling windows in modeling phase
+* **Storage**: Aggregated features → **Parquet**
 
 ---
 
-## 5. **Model Training**
+## 4. **System Architecture**
 
-### 5.1 Input shapes
+* **PostgreSQL + PostGIS**
 
-* **Tier A only**: `(batch, seq_len, n_features_A)`
-* **A + B**: Concatenate or pool region features before LSTM
-* **A + B + C**: Same as above with additional pseudo-regions for edge bands
+  * Tables: `regions`, `climatology`, `daily_extent`, metadata
+  * Use PostGIS functions for spatial aggregation and region operations
 
-### 5.2 Forecast horizons
+* **Parquet Feature Store**
 
-* Daily (+1), weekly (+7), monthly (+30)
-* Multi-head output or separate models
+  * Schema (initial):
 
-### 5.3 Baselines
+    ```
+    date, region, variable, stat, value
+    ```
+  * Partitioned by year; stored locally or cloud
 
-* Persistence (`y(t+H) = y(t)`)
-* Seasonal-naïve (climatology for day-of-year)
+* **Raw Data Access**
 
----
-
-## 6. **Milestones**
-
-1. **M1 – Setup infrastructure**
-
-   * Postgres/PostGIS database
-   * GCS bucket for project data
-   * Parquet storage layout agreed
-
-2. **M2 – Tier A pipeline**
-
-   * Aggregate NSIDC → extent anomaly
-   * ERA5 → daily features over Arctic
-   * Join into Parquet table
-   * Train baseline + LSTM for D+7
-
-3. **M3 – Tier B pipeline**
-
-   * Add basin/sea regions
-   * Aggregate ERA5 + extent anomaly per basin
-   * Retrain and evaluate vs. Tier A
-
-4. **M4 – Tier C pipeline**
-
-   * Implement edge detection + bands
-   * Aggregate ERA5 features in bands
-   * Retrain and evaluate vs. previous tiers
-
-5. **M5 – Refinement**
-
-   * Feature engineering improvements
-   * Hyperparameter tuning for LSTM
-   * Robustness checks by season/decade
+  * ERA5: read from Zarr via xarray/dask, cached after aggregation
+  * NSIDC: local downloads, ingested into PostGIS
 
 ---
 
-## 7. **Directory Layout Proposal**
+## 5. **Implementation Phases**
 
-```
-/data
-    /nsidc/raw
-    /era5/raw
-    /features
-        horizon=D7
-            tier=A
-                region_id=ARCTIC_ALL
-                    year=1995
-                    ...
-            tier=B
-            tier=C
-/models
-/notebooks
-/sql
-/docs
-```
+### Phase 0 – Warmup (Sanity Check)
 
+* Load a single NSIDC file + single ERA5 day
+* Plot both on the same projection (matplotlib/cartopy)
+* Store results in PostGIS + Parquet
+
+### Phase 1 – Data Pipeline
+
+1. **NSIDC ingestion → PostGIS**
+
+   * 1–2 years only
+   * Compute daily pan-Arctic extent using area grid
+   * Create climatology baseline (1991–2020) for anomalies
+
+2. **ERA5 aggregation → Parquet**
+
+   * Aggregate pan-Arctic stats (means, percentiles, anomalies)
+   * Write daily records to Parquet
+   * Test partitioning schemes
+
+3. **Exploratory Analysis**
+
+   * Plot daily time series, anomalies, climatologies
+   * Check data consistency across years
+
+---
+
+### Phase 2 – Baseline Modeling
+
+1. Define **targets**: extent anomaly shifted by +7 days (`y = anom.shift(-7)`)
+2. Create **baselines**:
+
+   * Persistence (`y_hat = anomaly_t`)
+   * Climatology (`y_hat = mean anomaly by day-of-year`)
+3. Fit simple models:
+
+   * Linear regression
+   * Ridge / Lasso
+   * Random Forest, XGBoost (CPU-friendly)
+4. Metrics:
+
+   * RMSE, MAE, correlation
+   * Skill scores vs persistence and climatology
+
+---
+
+### Phase 3 – Time-Series Specific Modeling
+
+* Add **lags and rolling features** (t-1, t-7, t-30)
+* Seasonal encoding (`sin(doy)`, `cos(doy)`)
+* Validation: **expanding window backtest**
+* Direct multi-horizon models: separate regressors for +7, +14, +30
+
+---
+
+### Phase 4 – Neural Network Experiment (Optional, Learning-Oriented)
+
+* Small LSTM prototype (only +7d horizon, minimal variables)
+* Trained on CPU; small-scale due to compute limits
+* Compare with tree ensembles
+
+---
+
+### Phase 5 – Advanced Features (Longer-Term)
+
+* Expand to regional models (Tier B)
+* Add more ERA5 variables (winds, geopotential)
+* Implement ice-edge band approach (Tier C)
+* Advanced spatio-temporal modeling
+
+---
+
+### Phase 6 – CNN-LSTM Experiment (Advanced Learning-Oriented)
+
+* **Spatial ERA5 preprocessing pipeline**
+  * Regrid ERA5 variables to Arctic Stereographic projection (EPSG:3411)
+  * Downsample to computationally feasible grid (64×64 or 128×128)
+  * Create multi-channel "image" sequences (T2M, SST, MSLP)
+* **CNN-LSTM architecture implementation**
+  * CNN spatial feature extraction from gridded weather data (→ feature vectors)
+  * LSTM temporal modeling of spatial feature sequences
+  * Multi-horizon prediction heads (+7, +14, +30 days)
+* **Spatio-temporal evaluation**
+  * Compare against aggregated-feature LSTM from Phase 4
+  * Analyze CNN activation patterns and regional importance
+  * Evaluate both pan-Arctic extent and regional breakdown predictions
+* **Memory-efficient training**
+  * Modular training of CNN and LSTM components
+  * Use sliding window approach for long temporal sequences
+  * Document computational trade-offs and optimization strategies
+
+---
+
+## 6. **Evaluation Strategy**
+
+* Compare models against persistence and climatology baselines
+* Use multiple metrics: RMSE, MAE, anomaly correlation coefficient
+* Seasonal breakdown (evaluate winter vs summer separately)
+* Document strengths/weaknesses per horizon and per model class
+
+---
+
+## 7. **Milestones**
+
+**M0 – Warmup**
+
+* [ ] One-day NSIDC + ERA5 joined, plotted, stored in DB/Parquet
+
+**M1 – Basic Pipeline**
+
+* [ ] 1 year of NSIDC ingested into PostGIS
+* [ ] Pan-Arctic extent + anomaly time series computed
+* [ ] ERA5 aggregated + stored in Parquet (1 year)
+
+**M2 – EDA**
+
+* [ ] Time series and climatology plots
+* [ ] Seasonal anomaly plots
+* [ ] Validate baseline patterns
+
+**M3 – Baselines + Simple ML**
+
+* [ ] Persistence & climatology baselines
+* [ ] Linear / Ridge / Random Forest trained on +7 horizon
+* [ ] Skill scores reported
+
+**M4 – Time-Series Models**
+
+* [ ] Lagged features & expanding-window backtesting
+* [ ] Multi-horizon models (+7, +14, +30)
+
+**M5 – LSTM Experiment**
+
+* [ ] Small-scale prototype trained
+* [ ] Lessons documented
+
+**M6 – Advanced Features**
+
+* [ ] Regional breakdowns (Tier B)
+* [ ] Edge-based features (Tier C)
+* [ ] Expanded evaluation
+
+**M7 – CNN-LSTM Experiment**
+
+* [ ] ERA5 spatial preprocessing pipeline implemented
+* [ ] Arctic Stereographic regridding and downsampling working
+* [ ] CNN-LSTM architecture trained and evaluated
+* [ ] CNN activation pattern analysis completed
+* [ ] Computational optimization strategies documented
+
+---
+
+## 8. **Notebook Structure (Documentation Backbone)**
+
+1. **01\_data\_ingestion\_nsidc.ipynb**
+
+   * Load and process NSIDC data → PostGIS
+   * Compute pan-Arctic extent + anomalies
+
+2. **02\_data\_ingestion\_era5.ipynb**
+
+   * Access ERA5 Zarr with xarray/dask
+   * Aggregate daily pan-Arctic stats → Parquet
+
+3. **03\_database\_and\_parquet\_demo.ipynb**
+
+   * Example PostGIS spatial queries
+   * Example Parquet partitioning + read performance test
+
+4. **04\_exploratory\_analysis.ipynb**
+
+   * Time series, climatology, seasonal cycle plots
+   * Joint NSIDC/ERA5 feature exploration
+
+5. **05\_baseline\_models.ipynb**
+
+   * Persistence, climatology baselines
+   * Linear, Ridge, Random Forest
+
+6. **06\_time\_series\_models.ipynb**
+
+   * Lag features, expanding window backtests
+   * Horizon-specific models
+
+7. **07\_lstm\_experiment.ipynb**
+
+   * Minimal LSTM setup
+   * Training and evaluation vs baselines
+
+8. **08\_evaluation\_and\_summary.ipynb**
+
+   * Consolidated metrics, seasonal skill tables
+   * Model comparisons and discussion
+
+9. **09\_future\_extensions.ipynb** *(optional)*
+
+   * Regional models, edge bands, more variables
+
+10. **10\_cnn\_lstm\_experiment.ipynb**
+
+    * ERA5 spatial preprocessing and regridding pipeline
+    * CNN-LSTM architecture design and implementation
+    * Spatio-temporal training and validation workflows
+    * CNN activation pattern analysis and regional importance mapping
+    * Performance comparison with aggregated-feature models
+
+---
+
+## 9. **Success Criteria**
+
+* ✅ Working PostGIS + Parquet pipeline
+* ✅ Multiple models trained, compared against persistence/climatology
+* ✅ Time-series backtests implemented
+* ✅ LSTM prototype run (even if not strong)
+* ✅ EDA and evaluations well-documented in notebooks
