@@ -24,11 +24,11 @@ The following tables currently exist in the database:
 * **Indexes:** `UNIQUE INDEX ice_extent_regional_daily_pk (region, date)`
 * **Description:** Daily sea-ice extent per region
 
-| Column | Type               | Nullable | Description       |
-|--------|--------------------|----------|-------------------|
-| date   | date               | NO       | UTC date          |
-| extent | double precision   | YES      | Ice extent (units unclear) |
-| region | character varying  | NO       | Region identifier |
+| Column      | Type               | Nullable | Description                     |
+|-------------|--------------------|-----------|---------------------------------|
+| date        | date               | NO       | UTC date                        |
+| extent_mkm2 | double precision   | YES      | Ice extent in million km² (Mkm²)|
+| region      | character varying  | NO       | Region identifier               |
 
 ### ice\_extent\_climatology
 * **Grain:** 1 row per **day-of-year**
