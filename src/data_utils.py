@@ -1,9 +1,3 @@
-"""Utility functions for loading and processing Arctic sea ice data.
-
-This module provides functions for loading data from PostgreSQL database and
-merging ERA5 atmospheric data with sea ice extent measurements for analysis.
-"""
-
 import os
 from pathlib import Path
 from typing import List, Optional, Union
@@ -119,7 +113,7 @@ def _load_data_for_year(year: int, region: str) -> pd.DataFrame:
     return df_merged
 
 
-def load_data(regions: Union[str, List[str]], years: Union[int, List[int]]) -> pd.DataFrame:
+def load_data(regions: Union[str, List[str]], years: Union[int, List[int], range]) -> pd.DataFrame:
     """Load ice extent and atmospheric data for multiple regions and years.
 
     This is the main public API for loading combined ERA5 atmospheric and sea ice extent data.
