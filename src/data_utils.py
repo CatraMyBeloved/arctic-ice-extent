@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
 import pandas as pd
 
@@ -9,8 +9,28 @@ PROJECT_DIR: Path = Path(__file__).parent.parent
 DATA_DIR: Path = PROJECT_DIR / "data"
 DATABASE_URL: str = 'postgresql://postgres:password@localhost:5432/seaice'
 
+# Valid region names (database naming convention)
+Region = Literal[
+    'pan_arctic',
+    'Baffin',
+    'Barents',
+    'Beaufort',
+    'Bering',
+    'CanadianArchipelago',
+    'Central',
+    'East',
+    'Greenland',
+    'Hudson',
+    'Kara',
+    'Laptev',
+    'Okhotsk',
+]
 
-def load_yearly_data_from_database(year: int, region: Optional[str] = None) -> pd.DataFrame:
+# Public API exports
+__all__ = ['load_data', 'load_yearly_data_from_database', 'Region']
+
+
+def load_yearly_data_from_database(year: int, region: Optional[Region] = None) -> pd.DataFrame:
     """Load yearly sea ice data from the PostgreSQL database.
 
     Returns data with consistent column naming: date, region, extent_mkm2.
@@ -38,11 +58,11 @@ def load_yearly_data_from_database(year: int, region: Optional[str] = None) -> p
             query += f" AND region = '{region}'"
 
     # Load data into DataFrame
-    df = pd.read_sql(query, engine)
+    df = pd.read_sql(query, engine, parse_dates=['date'])
 
     return df
 
-def _load_data_for_year(year: int, region: str) -> pd.DataFrame:
+def _load_data_for_year(year: int, region: Region) -> pd.DataFrame:
     """Internal helper: Load and merge ERA5 atmospheric data with sea ice extent for a year and region.
 
     Handles the format mismatch between long-format parquet files and wide-format database tables
@@ -107,13 +127,20 @@ def _load_data_for_year(year: int, region: str) -> pd.DataFrame:
     df_wide = df_wide.rename(columns={'mapped_region': 'region'})
     df_wide.columns.name = None
 
+    # Ensure datetime types for proper merging
+    df_wide['date'] = pd.to_datetime(df_wide['date'])
+
     df_ice_extent = load_yearly_data_from_database(year, region)
+
+    # Ensure both dataframes have consistent datetime types before merging
+    df_ice_extent['date'] = pd.to_datetime(df_ice_extent['date'])
+
     df_merged = pd.merge(df_wide, df_ice_extent, on=['date', 'region'], how='left')
 
     return df_merged
 
 
-def load_data(regions: Union[str, List[str]], years: Union[int, List[int], range]) -> pd.DataFrame:
+def load_data(regions: Union[Region, List[Region]], years: Union[int, List[int], range]) -> pd.DataFrame:
     """Load ice extent and atmospheric data for multiple regions and years.
 
     This is the main public API for loading combined ERA5 atmospheric and sea ice extent data.
@@ -123,6 +150,8 @@ def load_data(regions: Union[str, List[str]], years: Union[int, List[int], range
     Args:
         regions: Single region name or list of regions (e.g., 'Central', ['Barents', 'Beaufort']).
                  Use 'pan_arctic' for full Arctic coverage.
+                 Valid regions: pan_arctic, Baffin, Barents, Beaufort, Bering, CanadianArchipelago,
+                 Central, East, Greenland, Hudson, Kara, Laptev, Okhotsk
         years: Single year or list of years (e.g., 2000, [2000, 2001, 2002], range(2000, 2024)).
 
     Returns:
