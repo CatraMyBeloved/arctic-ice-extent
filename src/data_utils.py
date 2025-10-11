@@ -26,8 +26,45 @@ Region = Literal[
     'Okhotsk',
 ]
 
+# All available regions as a list (for "all" parameter support)
+ALL_REGIONS: List[str] = [
+    'pan_arctic', 'Baffin', 'Barents', 'Beaufort', 'Bering',
+    'CanadianArchipelago', 'Central', 'East', 'Greenland',
+    'Hudson', 'Kara', 'Laptev', 'Okhotsk'
+]
+
 # Public API exports
-__all__ = ['load_data', 'load_yearly_data_from_database', 'Region']
+__all__ = ['load_data', 'load_yearly_data_from_database', 'Region', 'get_available_regions', 'get_available_years']
+
+
+def get_available_regions() -> List[str]:
+    """Get list of all available regions.
+
+    Returns:
+        List of all valid region names that can be used with load_data().
+    """
+    return ALL_REGIONS.copy()
+
+
+def get_available_years() -> List[int]:
+    """Get list of all available years based on parquet files.
+
+    Returns:
+        List of years for which data is available.
+    """
+    parquet_dir = DATA_DIR / "processed" / "parquet"
+    if not parquet_dir.exists():
+        return []
+
+    years = []
+    for file in parquet_dir.glob("era5_regional_*.parquet"):
+        try:
+            year = int(file.stem.split('_')[-1])
+            years.append(year)
+        except ValueError:
+            continue
+
+    return sorted(years)
 
 
 def load_yearly_data_from_database(year: int, region: Optional[Region] = None) -> pd.DataFrame:
@@ -140,19 +177,28 @@ def _load_data_for_year(year: int, region: Region) -> pd.DataFrame:
     return df_merged
 
 
-def load_data(regions: Union[Region, List[Region]], years: Union[int, List[int], range]) -> pd.DataFrame:
+def load_data(
+    regions: Union[Region, List[Region], Literal['all']] = 'all',
+    years: Union[int, List[int], range, Literal['all']] = 'all'
+) -> pd.DataFrame:
     """Load ice extent and atmospheric data for multiple regions and years.
 
     This is the main public API for loading combined ERA5 atmospheric and sea ice extent data.
-    Accepts flexible inputs (single values or lists) and returns a unified DataFrame with
+    Accepts flexible inputs (single values, lists, or 'all') and returns a unified DataFrame with
     consistent units (extent_mkm2 in million km²).
 
     Args:
-        regions: Single region name or list of regions (e.g., 'Central', ['Barents', 'Beaufort']).
-                 Use 'pan_arctic' for full Arctic coverage.
+        regions: Region(s) to load. Options:
+                 - 'all': Load all available regions (default)
+                 - Single region: 'Central', 'Bering', etc.
+                 - List of regions: ['Barents', 'Beaufort', 'Central']
                  Valid regions: pan_arctic, Baffin, Barents, Beaufort, Bering, CanadianArchipelago,
                  Central, East, Greenland, Hudson, Kara, Laptev, Okhotsk
-        years: Single year or list of years (e.g., 2000, [2000, 2001, 2002], range(2000, 2024)).
+        years: Year(s) to load. Options:
+               - 'all': Load all available years (default)
+               - Single year: 2000
+               - List of years: [2000, 2001, 2002]
+               - Range: range(2000, 2024)
 
     Returns:
         DataFrame with columns including: date, region, extent_mkm2, and ERA5 variables
@@ -162,10 +208,29 @@ def load_data(regions: Union[Region, List[Region]], years: Union[int, List[int],
         FileNotFoundError: If ERA5 parquet files don't exist for specified years.
         ValueError: If specified regions don't exist in the data.
 
+    Examples:
+        >>> # Load all regions for all years
+        >>> df = load_data()
+
+        >>> # Load all regions for specific years
+        >>> df = load_data(years=range(2000, 2006))
+
+        >>> # Load specific region for all years
+        >>> df = load_data(regions='Central')
+
+        >>> # Load multiple regions for specific years
+        >>> df = load_data(regions=['Bering', 'Central'], years=[2000, 2001])
     """
-    if isinstance(regions, str):
+    # Handle "all" for regions
+    if regions == 'all':
+        regions = ALL_REGIONS
+    elif isinstance(regions, str):
         regions = [regions]
-    if isinstance(years, int):
+
+    # Handle "all" for years
+    if years == 'all':
+        years = get_available_years()
+    elif isinstance(years, int):
         years = [years]
 
     years = list(years)
