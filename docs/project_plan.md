@@ -25,110 +25,119 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 ## 3. **Data Sources**
 
-### 3.1 NSIDC (Sea Ice Concentration, daily GeoTIFF/shapefile)
+### 3.1 NSIDC Sea Ice Index
 
-* **Derived products**:
+* **Data format**: Pre-computed CSV tables from NSIDC G02135 v4.0
+  * Pan-Arctic daily extent: `N_seaice_extent_daily_v3.0.csv`
+  * Regional daily extent: `N_Sea_Ice_Index_Regional_Daily_Data_G02135_v4.0.xlsx`
+  * Climatology (1981-2010): `N_seaice_extent_climatology_1981-2010_v3.0.csv`
+* **Regions covered**: 14 Arctic regions (Baffin, Barents, Beaufort, Bering, Canadian Archipelago, Central Arctic, Chukchi, East Siberian, Greenland, Hudson, Kara, Laptev, Okhotsk, St. Lawrence) plus pan-arctic
+* **Storage**: PostgreSQL tables with extent in million km² (Mkm²) units
 
-  * Sea ice extent (≥15% SIC threshold, using area-per-pixel grid)
-  * Daily climatology (1991–2020) for anomalies
-* **Storage**: Raw GeoTIFFs → PostGIS (with metadata, polygons, extent timeseries)
+### 3.2 ERA5 Reanalysis (Copernicus Climate Data Store)
 
-### 3.2 ERA5 (Zarr on Google Cloud)
-
-* **Start with 3 variables**: 2m temperature (`t2m`), sea surface temperature (`sst`), mean sea-level pressure (`msl`)
-* **Features (pan-Arctic, later regional)**:
-
-  * Mean, anomaly, 15th percentile, 85th percentile
-  * Add lags (`t-1`, `t-7`, `t-30`) and rolling windows in modeling phase
-* **Storage**: Aggregated features → **Parquet**
+* **Access method**: Downloaded as NetCDF files via CDS API
+* **Variables**: 2m temperature (`t2m`), mean sea-level pressure (`msl`), 10m u-wind (`u10`), 10m v-wind (`v10`), total precipitation (`tp`), derived wind speed
+* **Processing pipeline**:
+  * Download monthly NetCDF files by variable
+  * Merge variables and apply unit conversions (K→°C, Pa→hPa)
+  * Aggregate to regional statistics (mean, std, p15, p85) using NSIDC region shapefiles
+* **Storage**: Regional aggregations → **Parquet** (long format: date, region, variable, stat, value)
 
 ---
 
 ## 4. **System Architecture**
 
-* **PostgreSQL + PostGIS**
+* **PostgreSQL Database**
 
-  * Tables: `regions`, `climatology`, `daily_extent`, metadata
-  * Use PostGIS functions for spatial aggregation and region operations
+  * Tables:
+    * `ice_extent_pan_arctic_daily`: Daily pan-Arctic extent (date, region, extent_mkm2)
+    * `ice_extent_regional_daily`: Daily regional extent (date, region, extent_mkm2)
+    * `ice_extent_climatology`: Day-of-year climatology with percentiles (dayofyear, avg_extent, std_dev, p10, p25, p50, p75, p90)
+  * Primary keys: `(region, date)` for efficient time-series queries
+  * Units: All extent values in million km² (Mkm²)
 
 * **Parquet Feature Store**
 
-  * Schema (initial):
+  * Schema: `date, region, variable, stat, value`
+  * Files: `data/processed/parquet/era5_regional_{year}.parquet`
+  * Partitioned by year; stored locally
+  * Contains regional atmospheric statistics for all ERA5 variables
 
-    ```
-    date, region, variable, stat, value
-    ```
-  * Partitioned by year; stored locally or cloud
+* **Data Pipeline**
 
-* **Raw Data Access**
-
-  * ERA5: read from Zarr via xarray/dask, cached after aggregation
-  * NSIDC: local downloads, ingested into PostGIS
+  * NSIDC: CSV/Excel → PostgreSQL (direct ingestion, no GIS processing)
+  * ERA5: CDS API → NetCDF (raw) → NetCDF (interim, merged/transformed) → Parquet (aggregated by region)
+  * Unified access via `src/data_utils.load_data()` function
 
 ---
 
 ## 5. **Implementation Phases**
 
-### Phase 0 – Warmup (Sanity Check)
+### Phase 0 – Warmup (Completed)
 
-* Load a single NSIDC file + single ERA5 day
-* Plot both on the same projection (matplotlib/cartopy)
-* Store results in PostGIS + Parquet
+* NSIDC CSV data loaded into PostgreSQL
+* ERA5 data download and transformation pipeline established
+* Basic data access through `load_data()` utility function
 
-### Phase 1 – Data Pipeline
+### Phase 1 – Data Pipeline (Completed)
 
-1. **NSIDC ingestion → PostGIS**
+1. **NSIDC ingestion → PostgreSQL**
 
-   * 1–2 years only
-   * Compute daily pan-Arctic extent using area grid
-   * Create climatology baseline (1991–2020) for anomalies
+   * Full historical data (1979-2023) ingested from NSIDC CSV/Excel files
+   * Pan-Arctic and regional daily extent stored in separate tables
+   * Climatology baseline (1981-2010) loaded with percentile data
 
-2. **ERA5 aggregation → Parquet**
+2. **ERA5 download and processing**
 
-   * Aggregate pan-Arctic stats (means, percentiles, anomalies)
-   * Write daily records to Parquet
-   * Test partitioning schemes
+   * CDS API download script for monthly NetCDF files (1979-2023)
+   * Transformation pipeline: variable merging, unit conversions, wind speed derivation
+   * Regional aggregation using NSIDC shapefiles with regionmask
+   * Pan-Arctic aggregation from combined regional masks
 
-3. **Exploratory Analysis**
+3. **Feature storage → Parquet**
 
-   * Plot daily time series, anomalies, climatologies
-   * Check data consistency across years
+   * Regional atmospheric statistics (mean, std, p15, p85) stored in yearly Parquet files
+   * Long-format schema enables flexible querying by region/variable/stat
+   * Partitioned by year for efficient access
 
----
+### Phase 2 – Exploratory Analysis (Completed)
 
-### Phase 2 – Baseline Modeling
+* Time series visualizations of ice extent and atmospheric variables
+* Seasonal cycle heatmaps by region
+* Temperature-ice extent correlation analysis with seasonal breakdown
+* Climatology computation for all regions and variables
+* Trend analysis using linear regression
 
-1. Define **targets**: extent anomaly shifted by +7 days (`y = anom.shift(-7)`)
-2. Create **baselines**:
+### Phase 3 – Baseline Modeling (In Progress)
 
-   * Persistence (`y_hat = anomaly_t`)
-   * Climatology (`y_hat = mean anomaly by day-of-year`)
-3. Fit simple models:
+1. **Climatology baseline**
 
-   * Linear regression
-   * Ridge / Lasso
-   * Random Forest, XGBoost (CPU-friendly)
-4. Metrics:
+   * Day-of-year mean climatology computed for all regions
+   * Used as benchmark for anomaly calculations
 
-   * RMSE, MAE, correlation
-   * Skill scores vs persistence and climatology
+2. **SARIMA models** (Completed)
 
----
+   * Monthly aggregation of daily data to make SARIMA tractable
+   * Model 1: SARIMA(1,0,1)×(0,1,1,12) on raw extent values
+   * Model 2: SARIMA(2,0,2)×(1,0,1,12) on anomaly values
+   * 40-year training period (1979-2018), 5-year test set (2019-2023)
+   * Performance metrics: RMSE ~0.36-0.40 Mkm², MAE ~0.27-0.33 Mkm², MAPE ~3.5-4%
 
-### Phase 3 – Time-Series Specific Modeling
+3. **Simple ML models** (Pending)
 
-* Add **lags and rolling features** (t-1, t-7, t-30)
-* Seasonal encoding (`sin(doy)`, `cos(doy)`)
-* Validation: **expanding window backtest**
-* Direct multi-horizon models: separate regressors for +7, +14, +30
+   * Linear regression, Ridge, Lasso
+   * Random Forest, XGBoost
+   * Multi-horizon predictions (+7, +14, +30 days)
 
----
+### Phase 4 – Neural Network Experiment (Completed - Basic LSTM)
 
-### Phase 4 – Neural Network Experiment (Optional, Learning-Oriented)
-
-* Small LSTM prototype (only +7d horizon, minimal variables)
-* Trained on CPU; small-scale due to compute limits
-* Compare with tree ensembles
+* Basic LSTM implementation with 30-day lookback window
+* Architecture: 2-layer LSTM (64 hidden units) + dropout (0.2)
+* Training: 100 epochs with early stopping (patience=15)
+* Data: 1989-2019 training, 2020-2023 test split
+* Performance: Validation loss ~0.000316 (normalized MSE)
+* Trained on CPU with gradient clipping and learning rate scheduling
 
 ---
 
@@ -175,41 +184,54 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 **M0 – Warmup**
 
-* [x] One-day NSIDC + ERA5 joined, plotted, stored in DB/Parquet
+* [x] NSIDC data loaded into PostgreSQL
+* [x] ERA5 download and transformation pipeline established
+* [x] Data access utilities created
 
 **M1 – Basic Pipeline**
 
-* [x] 1 year of NSIDC ingested into PostGIS
-* [x] Pan-Arctic extent + anomaly time series computed
-* [x] ERA5 aggregated + stored in Parquet (1 year)
+* [x] Full historical NSIDC data (1979-2023) ingested
+* [x] Pan-Arctic and regional extent tables populated
+* [x] ERA5 data downloaded for all years (1979-2023)
+* [x] Regional aggregations computed and stored in Parquet
 
 **M2 – EDA**
 
-* [ ] Time series and climatology plots
-* [ ] Seasonal anomaly plots
-* [ ] Validate baseline patterns
+* [x] Time series visualizations for extent and atmospheric variables
+* [x] Seasonal cycle heatmaps by region
+* [x] Temperature-ice extent correlation analysis
+* [x] Climatology computation for all regions
 
-**M3 – Baselines + Simple ML**
+**M3 – Baselines**
 
-* [ ] Persistence & climatology baselines
-* [ ] Linear / Ridge / Random Forest trained on +7 horizon
-* [ ] Skill scores reported
+* [x] Climatology baseline computed
+* [x] SARIMA models trained and evaluated (monthly data)
+* [ ] Persistence baseline (daily data)
+* [ ] Simple ML models (Linear, Ridge, Random Forest, XGBoost)
+* [ ] Multi-horizon predictions (+7, +14, +30 days)
 
 **M4 – Time-Series Models**
 
-* [ ] Lagged features & expanding-window backtesting
-* [ ] Multi-horizon models (+7, +14, +30)
+* [ ] Lagged features engineering (t-1, t-7, t-30)
+* [ ] Seasonal encoding (sin/cos of day-of-year)
+* [ ] Expanding-window backtesting framework
+* [ ] Multi-horizon models with lagged features
 
 **M5 – LSTM Experiment**
 
-* [ ] Small-scale prototype trained
+* [x] Basic LSTM architecture implemented
+* [x] Training pipeline with early stopping and regularization
+* [x] Model trained on 30-year dataset (1989-2019)
+* [ ] Comprehensive evaluation vs baselines
+* [ ] Multi-horizon LSTM variants
 * [ ] Lessons documented
 
 **M6 – Advanced Features**
 
-* [ ] Regional breakdowns (Tier B)
-* [ ] Edge-based features (Tier C)
-* [ ] Expanded evaluation
+* [ ] Regional models for all 14 Arctic regions
+* [ ] Additional ERA5 variables (geopotential, longwave radiation)
+* [ ] Cross-regional feature engineering
+* [ ] Expanded evaluation across regions
 
 **M7 – CNN-LSTM Experiment**
 
@@ -221,66 +243,87 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 ---
 
-## 8. **Notebook Structure (Documentation Backbone)**
+## 8. **Notebook Structure (Current Implementation)**
 
-1. **01\_data\_ingestion\_nsidc.ipynb**
+**Data Ingestion & Processing**
 
-   * Load and process NSIDC data → PostGIS
-   * Compute pan-Arctic extent + anomalies
+1. **01a\_data\_ingestion\_era5\_download.ipynb**
+   * Downloads ERA5 data from Copernicus CDS API
+   * Monthly NetCDF files by variable (1979-2023)
+   * Implements retry logic with exponential backoff
 
-2. **02\_data\_ingestion\_era5.ipynb**
+2. **01b\_data\_ingestion\_nsidc.ipynb**
+   * Loads NSIDC CSV/Excel files into PostgreSQL
+   * Creates tables: `ice_extent_pan_arctic_daily`, `ice_extent_regional_daily`, `ice_extent_climatology`
+   * Handles region name mapping and unit conversions (km² → Mkm²)
 
-   * Access ERA5 Zarr with xarray/dask
-   * Aggregate daily pan-Arctic stats → Parquet
+3. **01c\_data\_ingestion\_era5\_transformation.ipynb**
+   * Merges monthly ERA5 variable files
+   * Applies unit transformations (K→°C, Pa→hPa)
+   * Computes derived variables (wind speed from u/v components)
+   * Aggregates to Arctic regions using NSIDC shapefiles + regionmask
+   * Saves regional statistics to yearly Parquet files
 
-3. **03\_database\_and\_parquet\_demo.ipynb**
+**Analysis & Modeling**
 
-   * Example PostGIS spatial queries
-   * Example Parquet partitioning + read performance test
+4. **02\_EDA.ipynb**
+   * Time series visualizations (extent + atmospheric variables)
+   * Seasonal cycle heatmaps by region
+   * Temperature-ice extent correlation with seasonal coloring
+   * Trend analysis using linear regression
 
-4. **04\_exploratory\_analysis.ipynb**
+5. **03\_baselines.ipynb**
+   * Climatology computation for all regions and variables
+   * Day-of-year mean patterns
+   * Visual comparison of climatology across regions
 
-   * Time series, climatology, seasonal cycle plots
-   * Joint NSIDC/ERA5 feature exploration
+6. **03\_sarima\_baseline.ipynb**
+   * SARIMA models on monthly aggregated data
+   * Model 1: SARIMA on raw extent values
+   * Model 2: SARIMA on anomaly values
+   * Train/test split (1979-2018 / 2019-2023)
+   * Performance metrics and residual diagnostics
 
-5. **05\_baseline\_models.ipynb**
+7. **04\_basic\_lstm.ipynb**
+   * PyTorch LSTM implementation (2-layer, 64 hidden units)
+   * Custom dataset with 30-day sequence length
+   * Training with early stopping, dropout, gradient clipping
+   * Trained on 1989-2019, tested on 2020-2023
 
-   * Persistence, climatology baselines
-   * Linear, Ridge, Random Forest
+**Experiments**
 
-6. **06\_time\_series\_models.ipynb**
+8. **experiments/shapefiles.ipynb**
+   * Shapefile exploration and region definitions
+   * NSIDC region visualization
 
-   * Lag features, expanding window backtests
-   * Horizon-specific models
+**Planned Notebooks**
 
-7. **07\_lstm\_experiment.ipynb**
+9. **05\_ml\_baselines.ipynb** (Planned)
+   * Linear regression, Ridge, Lasso, Random Forest, XGBoost
+   * Multi-horizon predictions (+7, +14, +30 days)
+   * Skill scores vs persistence and climatology
 
-   * Minimal LSTM setup
-   * Training and evaluation vs baselines
+10. **06\_time\_series\_models.ipynb** (Planned)
+    * Lagged features and seasonal encoding
+    * Expanding window backtesting
+    * Direct multi-horizon models
 
-8. **08\_evaluation\_and\_summary.ipynb**
-
-   * Consolidated metrics, seasonal skill tables
-   * Model comparisons and discussion
-
-9. **09\_future\_extensions.ipynb** *(optional)*
-
-   * Regional models, edge bands, more variables
-
-10. **10\_cnn\_lstm\_experiment.ipynb**
-
-    * ERA5 spatial preprocessing and regridding pipeline
-    * CNN-LSTM architecture design and implementation
-    * Spatio-temporal training and validation workflows
-    * CNN activation pattern analysis and regional importance mapping
-    * Performance comparison with aggregated-feature models
+11. **07\_evaluation\_summary.ipynb** (Planned)
+    * Consolidated metrics across all models
+    * Seasonal performance breakdown
+    * Model comparison and recommendations
 
 ---
 
 ## 9. **Success Criteria**
 
-* ✅ Working PostGIS + Parquet pipeline
-* ✅ Multiple models trained, compared against persistence/climatology
-* ✅ Time-series backtests implemented
-* ✅ LSTM prototype run (even if not strong)
-* ✅ EDA and evaluations well-documented in notebooks
+* ✅ Working PostgreSQL + Parquet data pipeline (completed)
+* ✅ Full historical data ingested (1979-2023) (completed)
+* ✅ Regional aggregation framework implemented (completed)
+* ✅ Exploratory data analysis completed with visualizations (completed)
+* ✅ SARIMA baseline models trained and evaluated (completed)
+* ✅ LSTM prototype implemented and trained (completed)
+* ⏳ Multiple ML models compared against baselines (in progress)
+* ⏳ Time-series backtesting framework implemented (pending)
+* ⏳ Multi-horizon predictions (+7, +14, +30 days) (pending)
+* ⏳ Comprehensive evaluation across models and horizons (pending)
