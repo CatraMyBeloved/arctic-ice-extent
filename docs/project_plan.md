@@ -175,13 +175,13 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 **M0 – Warmup**
 
-* [ ] One-day NSIDC + ERA5 joined, plotted, stored in DB/Parquet
+* [x] One-day NSIDC + ERA5 joined, plotted, stored in DB/Parquet
 
 **M1 – Basic Pipeline**
 
-* [ ] 1 year of NSIDC ingested into PostGIS
-* [ ] Pan-Arctic extent + anomaly time series computed
-* [ ] ERA5 aggregated + stored in Parquet (1 year)
+* [x] 1 year of NSIDC ingested into PostGIS
+* [x] Pan-Arctic extent + anomaly time series computed
+* [x] ERA5 aggregated + stored in Parquet (1 year)
 
 **M2 – EDA**
 
