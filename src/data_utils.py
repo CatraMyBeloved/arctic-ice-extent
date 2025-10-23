@@ -177,6 +177,50 @@ def _load_data_for_year(year: int, region: Region) -> pd.DataFrame:
     return df_merged
 
 
+def _interpolate_missing_dates(df: pd.DataFrame) -> pd.DataFrame:
+    """Interpolate missing dates in the ice extent data.
+
+    Handles the historical issue where ice extent data was recorded every other day
+    from 1979-1989. Creates a complete daily time series by linearly interpolating
+    missing extent_mkm2 values. Atmospheric data (ERA5) is forward-filled if missing.
+
+    Args:
+        df: DataFrame with date, region, extent_mkm2, and atmospheric columns.
+
+    Returns:
+        DataFrame with daily resolution and interpolated extent values.
+    """
+    interpolated_groups = []
+
+    for region, group in df.groupby('region'):
+        # Create complete date range for this region
+        date_range = pd.date_range(
+            start=group['date'].min(),
+            end=group['date'].max(),
+            freq='D'
+        )
+
+        # Reindex to include all dates
+        group = group.set_index('date').reindex(date_range)
+
+        # Fill region column (it becomes NaN on new rows)
+        group['region'] = region
+
+        # Interpolate ice extent linearly
+        group['extent_mkm2'] = group['extent_mkm2'].interpolate(method='linear')
+
+        # Forward-fill atmospheric data (ERA5 should be complete, but handle edge cases)
+        atmospheric_cols = [col for col in group.columns if col not in ['region', 'extent_mkm2']]
+        for col in atmospheric_cols:
+            if group[col].isna().any():
+                group[col] = group[col].ffill()
+
+        group = group.reset_index().rename(columns={'index': 'date'})
+        interpolated_groups.append(group)
+
+    return pd.concat(interpolated_groups, ignore_index=True).sort_values(['date', 'region']).reset_index(drop=True)
+
+
 def load_data(
     regions: Union[Region, List[Region], Literal['all']] = 'all',
     years: Union[int, List[int], range, Literal['all']] = 'all'
@@ -251,5 +295,8 @@ def load_data(
     df_combined = pd.concat(dataframes, ignore_index=True)
 
     df_combined = df_combined.sort_values(['date', 'region']).reset_index(drop=True)
+
+    # Interpolate missing ice extent values (handles every-other-day data from 1979-1989)
+    df_combined = _interpolate_missing_dates(df_combined)
 
     return df_combined

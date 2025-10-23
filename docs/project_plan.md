@@ -42,7 +42,8 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
   * Download monthly NetCDF files by variable
   * Merge variables and apply unit conversions (K→°C, Pa→hPa)
   * Aggregate to regional statistics (mean, std, p15, p85) using NSIDC region shapefiles
-* **Storage**: Regional aggregations → **Parquet** (long format: date, region, variable, stat, value)
+* **Storage**: Regional aggregations → **Parquet** (long format: date, region, variable, stat_type, value)
+* **Regions**: 15 total (14 Arctic regions + Pan-Arctic aggregate)
 
 ---
 
@@ -54,6 +55,7 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
     * `ice_extent_pan_arctic_daily`: Daily pan-Arctic extent (date, region, extent_mkm2)
     * `ice_extent_regional_daily`: Daily regional extent (date, region, extent_mkm2)
     * `ice_extent_climatology`: Day-of-year climatology with percentiles (dayofyear, avg_extent, std_dev, p10, p25, p50, p75, p90)
+      * **Note**: Current implementation uses all available years (1979-2023) for climatology computation vs stated 1981-2010 WMO standard. See `docs/data_dictionary.md` for details.
   * Primary keys: `(region, date)` for efficient time-series queries
   * Units: All extent values in million km² (Mkm²)
 
@@ -130,14 +132,55 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
    * Random Forest, XGBoost
    * Multi-horizon predictions (+7, +14, +30 days)
 
-### Phase 4 – Neural Network Experiment (Completed - Basic LSTM)
+### Phase 4 – Neural Network Experiments
 
-* Basic LSTM implementation with 30-day lookback window
-* Architecture: 2-layer LSTM (64 hidden units) + dropout (0.2)
-* Training: 100 epochs with early stopping (patience=15)
-* Data: 1989-2019 training, 2020-2023 test split
-* Performance: Validation loss ~0.000316 (normalized MSE)
-* Trained on CPU with gradient clipping and learning rate scheduling
+**Implementation Status** (What has been built):
+
+* **Basic LSTM (Univariate)**
+  * [x] Architecture implemented: 2-layer LSTM (64 hidden units) + dropout (0.2)
+  * [x] Training pipeline: Early stopping (patience=15), gradient clipping, LR scheduling
+  * [x] Data split: 1989-2019 training, 2020-2023 test
+  * [x] Training completed: Best validation loss ~0.002006 (normalized MSE)
+
+* **Multivariate LSTM Variants**
+  * [x] Non-lagged variant (7 features): extent + ERA5 means/stds
+    * Best validation loss: ~0.000323 (normalized MSE)
+  * [x] Lagged variant (13 features): base features + extent/temperature lags (t-7, t-14, t-30)
+    * Best validation loss: ~0.000306 (normalized MSE)
+  * [x] Cyclical variant (9 features): base features + day-of-year sin/cos encoding
+    * Best validation loss: ~0.000321 (normalized MSE)
+
+* **Seq2Seq LSTM (Multi-Horizon)**
+  * [x] Vanilla encoder-decoder architecture (no attention, no teacher forcing)
+  * [x] 7-day forecast horizon (30-day input → 7-day output)
+  * [x] Multiple variants trained: univariate, multivariate, cyclical
+    * Univariate: ~0.001419 validation loss
+    * Multivariate: ~0.001631 validation loss
+
+**Validation Status** (What has been evaluated):
+
+* [x] Training convergence verified (all models reached early stopping)
+* [x] Validation loss tracking completed (normalized MSE during training)
+* [ ] **Denormalization to Mkm²** for fair comparison ← CRITICAL GAP
+* [ ] **Evaluation against persistence baseline** ← CRITICAL GAP
+* [ ] **Evaluation against climatology baseline** ← CRITICAL GAP
+* [ ] **Statistical significance testing** of feature contributions (ablation studies)
+* [ ] **Seasonal performance breakdown** (winter vs summer)
+* [ ] **Multi-horizon error accumulation analysis** (Seq2Seq day 1-7)
+* [ ] **Comparison to SARIMA** on identical test set with denormalized metrics
+* [ ] **Comprehensive lessons documented**
+
+**Important Notes**:
+
+* **Normalized metrics not directly comparable**: Validation losses reported in normalized units (mean=0, std=1). Must denormalize to Mkm² before comparing to SARIMA (RMSE ~0.36 Mkm²) or baselines.
+* **Features exploratory, not validated**: Lagged features and cyclical encoding added without ablation studies to confirm value. Lower validation loss observed but statistical significance not tested.
+* **No baseline comparisons yet**: Cannot assess whether LSTM models beat trivial forecasts (persistence/climatology) until denormalization and standardized evaluation completed.
+
+**Next Steps** (Phase 2-3 of Scientific Rigor Plan):
+
+1. Implement baseline models (persistence, climatology) - `notebooks/03b_baseline_models.ipynb`
+2. Create evaluation framework (`src/evaluation_utils.py`) with denormalization functions
+3. Comprehensive comparison notebook (`notebooks/07_model_comparison.ipynb`) with all models on identical metrics
 
 ---
 
@@ -210,21 +253,36 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 * [ ] Simple ML models (Linear, Ridge, Random Forest, XGBoost)
 * [ ] Multi-horizon predictions (+7, +14, +30 days)
 
-**M4 – Time-Series Models**
+**M4 – Time-Series Feature Engineering**
 
-* [ ] Lagged features engineering (t-1, t-7, t-30)
-* [ ] Seasonal encoding (sin/cos of day-of-year)
-* [ ] Expanding-window backtesting framework
-* [ ] Multi-horizon models with lagged features
+**Implementation**:
+* [x] Lagged features implemented in LSTM (t-7, t-14, t-30 for extent and temperature)
+* [x] Seasonal encoding implemented (sin/cos of day-of-year)
 
-**M5 – LSTM Experiment**
+**Validation**:
+* [ ] Lagged features validated via ablation studies (test impact of removing each lag)
+* [ ] Seasonal encoding validated (compare with vs without cyclical features)
+* [ ] Expanding-window backtesting framework created
+* [ ] Multi-horizon models with lagged features (simple ML: Linear, RF, XGBoost)
 
-* [x] Basic LSTM architecture implemented
-* [x] Training pipeline with early stopping and regularization
-* [x] Model trained on 30-year dataset (1989-2019)
-* [ ] Comprehensive evaluation vs baselines
-* [ ] Multi-horizon LSTM variants
-* [ ] Lessons documented
+**M5 – LSTM Experiments**
+
+**Implementation**:
+* [x] Basic LSTM architecture implemented (2-layer, 64 hidden, univariate)
+* [x] Multivariate LSTM variants implemented (non-lagged, lagged, cyclical)
+* [x] Seq2Seq LSTM implemented (7-day multi-horizon, vanilla encoder-decoder)
+* [x] Training pipeline with early stopping, dropout, gradient clipping, LR scheduling
+* [x] Models trained on 30-year dataset (1989-2019, test 2020-2023)
+
+**Validation** ← CRITICAL GAP:
+* [x] Training convergence verified (validation loss tracking)
+* [ ] **Denormalization and metric standardization** (convert to Mkm²)
+* [ ] **Comprehensive evaluation vs baselines** (persistence, climatology)
+* [ ] **Statistical validation of feature contributions** (ablation studies, significance tests)
+* [ ] **Seasonal performance breakdown** (winter vs summer)
+* [ ] **Multi-horizon error analysis** (Seq2Seq day 1-7 error accumulation)
+* [ ] **Model comparison** (all models on identical test set with identical metrics)
+* [ ] **Lessons documented** (what worked, what didn't, why)
 
 **M6 – Advanced Features**
 
@@ -284,46 +342,103 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
    * Train/test split (1979-2018 / 2019-2023)
    * Performance metrics and residual diagnostics
 
-7. **04\_basic\_lstm.ipynb**
+7. **04\_basic\_lstm.ipynb** (Completed)
    * PyTorch LSTM implementation (2-layer, 64 hidden units)
+   * Univariate: extent_mkm2 only
    * Custom dataset with 30-day sequence length
    * Training with early stopping, dropout, gradient clipping
    * Trained on 1989-2019, tested on 2020-2023
+   * Best validation loss: ~0.002006 (normalized MSE)
+
+8. **05\_multivariate\_lstm.ipynb** (Completed)
+   * Three LSTM variants with ERA5 atmospheric variables
+   * **Variant 1 - Non-lagged** (7 features): extent + t2m/msl/wind means/stds
+     * Best validation loss: ~0.000323
+   * **Variant 2 - Lagged** (13 features): base + extent/t2m lags (t-7, t-14, t-30)
+     * Best validation loss: ~0.000306 (best overall)
+   * **Variant 3 - Cyclical** (9 features): base + day_of_year sin/cos
+     * Best validation loss: ~0.000321
+   * Same architecture as basic LSTM (2-layer, 64 hidden, dropout 0.2)
+   * Feature engineering exploration: lags, cyclical encoding
+   * **Note**: Validation losses in normalized units, not yet evaluated vs baselines
+
+9. **06\_seq2seq\_lstm.ipynb** (Completed)
+   * Encoder-decoder LSTM for 7-day multi-horizon forecasting
+   * 30-day input sequence → 7-day output sequence
+   * Vanilla architecture (no attention, no teacher forcing)
+   * Multiple variants: univariate, multivariate, cyclical
+   * Best validation losses: ~0.001419-0.001631 (higher than single-step due to multi-day difficulty)
+   * **Note**: Multi-horizon error accumulation analysis pending
 
 **Experiments**
 
-8. **experiments/shapefiles.ipynb**
-   * Shapefile exploration and region definitions
-   * NSIDC region visualization
+10. **experiments/shapefiles.ipynb**
+    * Shapefile exploration and region definitions
+    * NSIDC region visualization
 
-**Planned Notebooks**
+**Planned Notebooks** (High Priority for Scientific Rigor)
 
-9. **05\_ml\_baselines.ipynb** (Planned)
-   * Linear regression, Ridge, Lasso, Random Forest, XGBoost
-   * Multi-horizon predictions (+7, +14, +30 days)
-   * Skill scores vs persistence and climatology
+11. **03b\_baseline\_models.ipynb** (Planned - HIGH PRIORITY)
+    * Persistence baseline (y_t+1 = y_t)
+    * Climatology baseline (day-of-year mean)
+    * Evaluation on 2020-2023 test period
+    * Seasonal breakdown (winter vs summer)
+    * Establishes minimum skill thresholds for all models
 
-10. **06\_time\_series\_models.ipynb** (Planned)
-    * Lagged features and seasonal encoding
-    * Expanding window backtesting
-    * Direct multi-horizon models
+12. **07\_model\_comparison.ipynb** (Planned - HIGH PRIORITY)
+    * Load all trained models (SARIMA, LSTM variants, Seq2Seq)
+    * **Denormalize LSTM predictions to Mkm²** (critical step)
+    * Unified evaluation on identical test set (2020-2023 daily)
+    * Metrics: RMSE, MAE, MAPE, skill scores vs baselines
+    * Statistical significance testing (Diebold-Mariano)
+    * Seasonal performance analysis (winter vs summer)
+    * Multi-horizon error accumulation (Seq2Seq)
+    * Export consolidated results to `results/model_comparison.csv`
 
-11. **07\_evaluation\_summary.ipynb** (Planned)
-    * Consolidated metrics across all models
-    * Seasonal performance breakdown
-    * Model comparison and recommendations
+**Planned Notebooks** (Lower Priority)
+
+13. **05\_ml\_baselines.ipynb** (Planned)
+    * Linear regression, Ridge, Lasso, Random Forest, XGBoost
+    * Multi-horizon predictions (+7, +14, +30 days)
+    * Skill scores vs persistence and climatology
+
+14. **08\_time\_series\_backtesting.ipynb** (Planned)
+    * Expanding window cross-validation
+    * Retrain models on multiple time periods (2019, 2020, 2021, 2022, 2023 test folds)
+    * Aggregate metrics with confidence intervals
+    * Statistical significance testing across folds
 
 ---
 
 ## 9. **Success Criteria**
 
-* ✅ Working PostgreSQL + Parquet data pipeline (completed)
-* ✅ Full historical data ingested (1979-2023) (completed)
-* ✅ Regional aggregation framework implemented (completed)
-* ✅ Exploratory data analysis completed with visualizations (completed)
-* ✅ SARIMA baseline models trained and evaluated (completed)
-* ✅ LSTM prototype implemented and trained (completed)
-* ⏳ Multiple ML models compared against baselines (in progress)
+**Data Infrastructure** (Completed):
+* ✅ Working PostgreSQL + Parquet data pipeline
+* ✅ Full historical data ingested (1979-2023)
+* ✅ Regional aggregation framework implemented
+* ✅ Exploratory data analysis completed with visualizations
+
+**Model Implementation** (Completed):
+* ✅ SARIMA baseline models trained (raw + anomaly variants)
+* ✅ Basic LSTM implemented and trained (univariate)
+* ✅ Multivariate LSTM variants implemented (non-lagged, lagged, cyclical)
+* ✅ Seq2Seq LSTM implemented (7-day multi-horizon)
+
+**Evaluation & Validation** (In Progress - CRITICAL for Scientific Rigor):
+* ✅ SARIMA evaluated with RMSE/MAE/MAPE in Mkm²
+* ⏳ Baseline models implemented (persistence, climatology) - HIGH PRIORITY
+* ⏳ Evaluation framework created (`src/evaluation_utils.py`) - HIGH PRIORITY
+* ⏳ LSTM predictions denormalized to Mkm² - HIGH PRIORITY
+* ⏳ All models evaluated on identical test set with standardized metrics - HIGH PRIORITY
+* ⏳ Statistical significance testing (model comparisons) - HIGH PRIORITY
+* ⏳ Seasonal performance breakdown (winter vs summer) - HIGH PRIORITY
+* ⏳ Feature validation via ablation studies (pending)
 * ⏳ Time-series backtesting framework implemented (pending)
-* ⏳ Multi-horizon predictions (+7, +14, +30 days) (pending)
-* ⏳ Comprehensive evaluation across models and horizons (pending)
+* ⏳ Multi-horizon error accumulation analysis (pending)
+* ⏳ Comprehensive evaluation documentation (pending)
+
+**Documentation** (Completed - NEW):
+* ✅ Methodology documentation (`docs/methodology.md`)
+* ✅ Evaluation methodology documentation (`docs/evaluation_methodology.md`)
+* ✅ Data dictionary updated with technical specifications
+* ✅ Project plan updated with implementation/validation status split
