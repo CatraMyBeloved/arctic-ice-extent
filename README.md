@@ -97,9 +97,9 @@ This project systematically explores:
 
 - [x] **Phase 0-1**: Data pipeline (NSIDC + ERA5 ingestion)
 - [x] **Phase 2**: Exploratory data analysis
-- [ ] **Phase 3**: Baseline models (persistence, climatology, linear regression)
-- [ ] **Phase 4**: Time series models with lagged features
-- [ ] **Phase 5**: LSTM experimentation
+- [x] **Phase 3**: Baseline models (persistence, climatology, linear regression)
+- [x] **Phase 4**: Time series models with lagged features
+- [ ] **Phase 5**: LSTM experimentation (**I PROGRESS**) 
 - [ ] **Phase 6**: Advanced CNN-LSTM spatial-temporal modeling
 
 See [docs/project_plan.md](docs/project_plan.md) for detailed milestones.
