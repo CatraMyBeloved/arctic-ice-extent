@@ -184,6 +184,55 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 ---
 
+### Phase 4.1 – Uncertainty Quantification & Extended Horizons
+
+**Implementation Status**: Planned
+
+**Goal**: Extend LSTM experiments to quantify prediction uncertainty and evaluate longer forecast horizons using ensemble methods, dropout-based uncertainty, and autoregressive architectures.
+
+**Components**:
+
+1. **LSTM Ensemble (10 Models)**
+   * Train 10 independent LSTM models with different random initializations
+   * Use best-performing architecture from Phase 4 (multivariate lagged variant)
+   * Generate prediction intervals from ensemble spread (mean, std, percentiles)
+   * Compare ensemble mean vs single-model performance
+   * Analyze inter-model variance as proxy for epistemic uncertainty
+   * Document computational costs and convergence patterns across ensemble members
+
+2. **MC Dropout for Uncertainty Estimation**
+   * Implement Monte Carlo Dropout during inference (dropout enabled at test time)
+   * Generate N forward passes per input (e.g., N=50 or N=100)
+   * Compute prediction statistics: mean, standard deviation, confidence intervals
+   * Compare MC Dropout uncertainty estimates vs ensemble uncertainty
+   * Analyze uncertainty calibration (reliability diagrams)
+   * Evaluate whether high-uncertainty predictions correlate with higher errors
+
+3. **Autoregressive Predictions for Extended Horizons**
+   * Implement autoregressive forecasting loop: use t+1 prediction as input for t+2
+   * Extend forecast horizon beyond 7 days (test 14-day and 30-day horizons)
+   * Compare autoregressive single-step LSTM vs direct Seq2Seq multi-step predictions
+   * Analyze error accumulation patterns over extended horizons
+   * Evaluate uncertainty growth with forecast lead time
+   * Document trade-offs: flexibility (single-step) vs stability (Seq2Seq)
+
+4. **Enhanced Encoder-Decoder LSTM**
+   * Implement attention mechanism for Seq2Seq architecture
+   * Add teacher forcing during training (scheduled sampling)
+   * Test bidirectional encoder for improved context modeling
+   * Multi-horizon outputs: 7-day, 14-day, 30-day forecast sequences
+   * Compare enhanced Seq2Seq vs vanilla version from Phase 4
+   * Analyze attention weights to understand temporal dependencies
+
+**Evaluation Focus**:
+* Uncertainty quantification metrics: prediction interval coverage, sharpness
+* Calibration analysis: reliability diagrams, calibration error
+* Multi-horizon skill: RMSE/MAE curves vs forecast lead time
+* Ensemble diversity vs accuracy trade-offs
+* Computational cost analysis (training time, inference speed)
+
+---
+
 ### Phase 5 – Advanced Features (Longer-Term)
 
 * Expand to regional models (Tier B)
@@ -193,24 +242,78 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 ---
 
-### Phase 6 – CNN-LSTM Experiment (Advanced Learning-Oriented)
+### Phase 6 – Spatial-Temporal CNN-LSTM (Advanced Learning-Oriented)
 
-* **Spatial ERA5 preprocessing pipeline**
-  * Regrid ERA5 variables to Arctic Stereographic projection (EPSG:3411)
-  * Downsample to computationally feasible grid (64×64 or 128×128)
-  * Create multi-channel "image" sequences (T2M, SST, MSLP)
-* **CNN-LSTM architecture implementation**
-  * CNN spatial feature extraction from gridded weather data (→ feature vectors)
-  * LSTM temporal modeling of spatial feature sequences
-  * Multi-horizon prediction heads (+7, +14, +30 days)
-* **Spatio-temporal evaluation**
-  * Compare against aggregated-feature LSTM from Phase 4
-  * Analyze CNN activation patterns and regional importance
-  * Evaluate both pan-Arctic extent and regional breakdown predictions
-* **Memory-efficient training**
-  * Modular training of CNN and LSTM components
-  * Use sliding window approach for long temporal sequences
-  * Document computational trade-offs and optimization strategies
+**Implementation Status**: Planned
+
+**Goal**: Incorporate gridded spatial data (ERA5 weather fields) into ice extent forecasting using CNN encoders to extract spatial features, followed by LSTM temporal modeling for scalar predictions.
+
+**Architecture Pipeline**:
+
+1. **Spatial ERA5 Preprocessing**
+   * Download gridded ERA5 data (not regional aggregates): T2M, MSLP, SST, sea ice concentration
+   * Regrid to Arctic Stereographic projection (EPSG:3411, Arctic-focused equal-area grid)
+   * Downsample to computationally feasible resolution (64×64 or 128×128 grid)
+   * Create multi-channel "image" time series: each timestep = [T2M, MSLP, SST, SIC] stack
+   * Normalize each channel (per-variable standardization)
+   * Store as zarr arrays or HDF5 for efficient sequential access
+
+2. **CNN Spatial Encoder**
+   * Input: (batch, time_steps, channels, height, width) - e.g., (32, 30, 4, 64, 64)
+   * For each timestep: apply CNN encoder to extract spatial feature vector
+   * Architecture options:
+     * **ResNet-style encoder**: 3-4 convolutional blocks with residual connections
+     * **Small VGG-style**: 3-5 conv layers with pooling, output 256-512 feature vector
+   * Output: (batch, time_steps, feature_dim) - compressed spatial representation per timestep
+   * Optionally: pre-train CNN on auxiliary task (e.g., predict SIC from weather fields)
+
+3. **LSTM Temporal Decoder (Scalar Predictions)**
+   * Input: CNN-encoded spatial features (time_steps × feature_dim)
+   * 2-3 layer LSTM processes temporal sequence of spatial features
+   * Output: scalar prediction(s) for pan-Arctic sea ice extent (Mkm²)
+   * Multi-horizon variants:
+     * Single-step: predict extent at t+1
+     * Seq2Seq: predict extent for t+1 to t+7
+     * Autoregressive: iteratively predict longer horizons (7-30 days)
+
+4. **Hybrid Architecture (CNN-LSTM + Tabular Features)**
+   * Combine CNN-encoded spatial features with region-aggregated tabular features
+   * Concatenate spatial feature vector with climatology, lagged extent, day-of-year
+   * Pass combined features to LSTM for temporal modeling
+   * Allows model to leverage both spatial patterns and pre-computed statistics
+
+**Training Strategy**:
+
+* **Modular pre-training**: Train CNN encoder separately on spatial prediction task (optional)
+* **End-to-end training**: Jointly optimize CNN + LSTM on extent forecasting
+* **Memory efficiency**: Use gradient checkpointing for CNN, sliding window batches for long sequences
+* **Data augmentation**: Random crops, spatial shifts (if applicable to Arctic grid)
+* **Regularization**: Spatial dropout in CNN, temporal dropout in LSTM
+
+**Evaluation & Analysis**:
+
+* **Performance comparison**: CNN-LSTM vs aggregated-feature LSTM from Phase 4/4.1
+* **Ablation studies**:
+  * CNN features only vs tabular features only vs hybrid
+  * Spatial resolution impact: 64×64 vs 128×128 grids
+  * Number of input channels: T2M only vs full 4-channel stack
+* **Spatial interpretability**:
+  * Visualize CNN activation maps (GradCAM or saliency maps)
+  * Identify which Arctic regions drive predictions (spatial attention)
+  * Analyze seasonal patterns in CNN feature importance
+* **Computational cost analysis**:
+  * Training time vs aggregated models (likely 5-10x slower)
+  * Inference latency (important for operational forecasting)
+  * Memory requirements and scalability
+
+**Deliverables**:
+
+* Gridded ERA5 preprocessing pipeline (zarr/HDF5 storage)
+* CNN-LSTM implementation in PyTorch with modular components
+* Trained models: CNN-only, LSTM-only, hybrid CNN-LSTM
+* Evaluation notebook comparing spatial vs aggregated approaches
+* Visualization of learned spatial features and attention patterns
+* Documentation of computational trade-offs and optimization strategies
 
 ---
 
@@ -284,6 +387,36 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 * [ ] **Model comparison** (all models on identical test set with identical metrics)
 * [ ] **Lessons documented** (what worked, what didn't, why)
 
+**M5.1 – Uncertainty Quantification & Extended Horizons**
+
+**Ensemble Models**:
+* [ ] Train 10-model LSTM ensemble with different initializations
+* [ ] Implement ensemble prediction statistics (mean, std, percentiles)
+* [ ] Evaluate ensemble mean vs single-model performance
+* [ ] Analyze epistemic uncertainty from ensemble spread
+* [ ] Document computational costs across ensemble members
+
+**MC Dropout**:
+* [ ] Implement MC Dropout inference (50-100 forward passes)
+* [ ] Generate prediction intervals from dropout sampling
+* [ ] Compare MC Dropout vs ensemble uncertainty estimates
+* [ ] Analyze uncertainty calibration (reliability diagrams)
+* [ ] Evaluate high-uncertainty prediction correlation with errors
+
+**Autoregressive Predictions**:
+* [ ] Implement autoregressive forecasting loop (t+1 → t+2 → ... → t+N)
+* [ ] Extend forecast horizon to 14-day and 30-day
+* [ ] Compare autoregressive vs Seq2Seq multi-step predictions
+* [ ] Analyze error accumulation over extended horizons
+* [ ] Document uncertainty growth with forecast lead time
+
+**Enhanced Encoder-Decoder**:
+* [ ] Add attention mechanism to Seq2Seq LSTM
+* [ ] Implement teacher forcing with scheduled sampling
+* [ ] Test bidirectional encoder architecture
+* [ ] Multi-horizon outputs (7-day, 14-day, 30-day)
+* [ ] Analyze attention weights for temporal dependencies
+
 **M6 – Advanced Features**
 
 * [ ] Regional models for all 14 Arctic regions
@@ -291,13 +424,29 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 * [ ] Cross-regional feature engineering
 * [ ] Expanded evaluation across regions
 
-**M7 – CNN-LSTM Experiment**
+**M7 – Spatial-Temporal CNN-LSTM**
 
-* [ ] ERA5 spatial preprocessing pipeline implemented
-* [ ] Arctic Stereographic regridding and downsampling working
-* [ ] CNN-LSTM architecture trained and evaluated
-* [ ] CNN activation pattern analysis completed
-* [ ] Computational optimization strategies documented
+**Data Preparation**:
+* [ ] Download gridded ERA5 data (T2M, MSLP, SST, SIC)
+* [ ] Regrid to Arctic Stereographic projection (EPSG:3411)
+* [ ] Downsample to 64×64 and 128×128 grids
+* [ ] Create multi-channel image time series
+* [ ] Store as zarr/HDF5 for efficient access
+
+**Model Implementation**:
+* [ ] CNN spatial encoder implemented (ResNet or VGG-style)
+* [ ] LSTM temporal decoder for scalar predictions
+* [ ] Hybrid CNN-LSTM + tabular features architecture
+* [ ] End-to-end training pipeline with gradient checkpointing
+* [ ] Multi-horizon prediction variants (single-step, Seq2Seq, autoregressive)
+
+**Evaluation & Analysis**:
+* [ ] Performance comparison vs aggregated-feature LSTM
+* [ ] Ablation studies (CNN-only, tabular-only, hybrid)
+* [ ] Spatial resolution impact analysis (64×64 vs 128×128)
+* [ ] CNN activation visualization (GradCAM/saliency maps)
+* [ ] Computational cost documentation (training time, memory, inference)
+* [ ] Spatial interpretability analysis completed
 
 ---
 
@@ -408,6 +557,65 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
     * Aggregate metrics with confidence intervals
     * Statistical significance testing across folds
 
+**Planned Notebooks** (Phase 4.1 - Uncertainty & Extended Horizons)
+
+15. **09\_lstm\_ensemble.ipynb** (Planned)
+    * Train 10 LSTM models with different random seeds
+    * Ensemble prediction statistics (mean, std, percentiles)
+    * Epistemic uncertainty analysis from ensemble spread
+    * Comparison: ensemble mean vs best single model
+    * Computational cost analysis
+
+16. **10\_mc\_dropout.ipynb** (Planned)
+    * Implement MC Dropout inference (50-100 forward passes)
+    * Generate prediction intervals and uncertainty estimates
+    * Reliability diagrams and calibration analysis
+    * Compare MC Dropout vs ensemble uncertainty
+    * Correlation between uncertainty and prediction errors
+
+17. **11\_autoregressive\_lstm.ipynb** (Planned)
+    * Autoregressive forecasting loop implementation
+    * Extended horizons: 14-day and 30-day predictions
+    * Error accumulation analysis over forecast lead time
+    * Comparison: autoregressive vs Seq2Seq approaches
+    * Uncertainty growth with horizon length
+
+18. **12\_attention\_seq2seq.ipynb** (Planned)
+    * Enhanced encoder-decoder with attention mechanism
+    * Teacher forcing with scheduled sampling
+    * Bidirectional encoder experiments
+    * Multi-horizon outputs (7-day, 14-day, 30-day)
+    * Attention weight visualization and interpretation
+
+**Planned Notebooks** (Phase 6 - CNN-LSTM)
+
+19. **13\_era5\_spatial\_preprocessing.ipynb** (Planned)
+    * Download gridded ERA5 data (T2M, MSLP, SST, SIC)
+    * Regrid to Arctic Stereographic (EPSG:3411)
+    * Downsample to 64×64 and 128×128 grids
+    * Create multi-channel image sequences
+    * Save to zarr/HDF5 format
+
+20. **14\_cnn\_encoder.ipynb** (Planned)
+    * CNN spatial encoder implementation (ResNet/VGG-style)
+    * Feature extraction from gridded weather data
+    * Optional pre-training on auxiliary task
+    * Spatial feature visualization
+
+21. **15\_cnn\_lstm\_hybrid.ipynb** (Planned)
+    * Full CNN-LSTM pipeline: spatial encoding + temporal modeling
+    * Hybrid architecture (CNN features + tabular features)
+    * Multi-horizon prediction variants
+    * Training with gradient checkpointing
+
+22. **16\_cnn\_lstm\_evaluation.ipynb** (Planned)
+    * Performance comparison vs aggregated-feature LSTM
+    * Ablation studies (CNN-only, tabular-only, hybrid)
+    * Spatial resolution impact (64×64 vs 128×128)
+    * GradCAM/saliency map visualization
+    * Regional importance and seasonal pattern analysis
+    * Computational cost analysis (training time, memory, inference)
+
 ---
 
 ## 9. **Success Criteria**
@@ -442,3 +650,22 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 * ✅ Evaluation methodology documentation (`docs/evaluation_methodology.md`)
 * ✅ Data dictionary updated with technical specifications
 * ✅ Project plan updated with implementation/validation status split
+
+**Uncertainty Quantification & Extended Horizons** (Phase 4.1 - Planned):
+* ⏳ 10-model LSTM ensemble trained and evaluated (pending)
+* ⏳ MC Dropout implementation with uncertainty calibration analysis (pending)
+* ⏳ Autoregressive predictions for 14-day and 30-day horizons (pending)
+* ⏳ Enhanced encoder-decoder with attention mechanism (pending)
+* ⏳ Prediction interval coverage and sharpness metrics (pending)
+* ⏳ Error accumulation analysis for extended horizons (pending)
+* ⏳ Uncertainty vs error correlation analysis (pending)
+
+**Spatial-Temporal CNN-LSTM** (Phase 6 - Planned):
+* ⏳ Gridded ERA5 data preprocessing pipeline (Arctic Stereographic) (pending)
+* ⏳ CNN spatial encoder implemented (ResNet or VGG-style) (pending)
+* ⏳ LSTM temporal decoder for scalar predictions (pending)
+* ⏳ Hybrid CNN-LSTM + tabular features architecture (pending)
+* ⏳ Multi-horizon spatial-temporal predictions (pending)
+* ⏳ Spatial interpretability analysis (GradCAM, attention maps) (pending)
+* ⏳ Ablation studies (CNN vs tabular vs hybrid) (pending)
+* ⏳ Computational cost documentation (pending)
