@@ -1,0 +1,29 @@
+# Local PostgreSQL + PostGIS for the Arctic sea ice project.
+# Credentials/host/port/db match the DATABASE_URL in src/data_utils.py:
+#   postgresql://postgres:password@localhost:5432/seaice
+#
+# Start:  podman compose up -d        (or: docker compose up -d)
+# Stop:   podman compose down         (add -v to also delete the data volume)
+# Logs:   podman compose logs -f db
+services:
+  db:
+    image: docker.io/postgis/postgis:16-3.4
+    container_name: seaice-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: seaice
+    ports:
+      - "5432:5432"
+    volumes:
+      - seaice-pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d seaice"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  seaice-pgdata:
+    name: seaice-pgdata

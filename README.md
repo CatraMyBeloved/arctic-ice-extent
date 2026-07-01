@@ -6,7 +6,7 @@ A learning-focused data science project exploring geospatial-temporal forecastin
 
 This project builds a complete pipeline for Arctic sea ice extent anomaly prediction, combining daily satellite observations with atmospheric reanalysis data. The primary goal is educational—understanding modern geospatial data workflows, spatial databases, and time series modeling—rather than production performance.
 
-**Current Status**: Data pipeline complete (Phase 1-2), exploratory analysis in progress, baseline modeling upcoming.
+**Current Status**: Data pipeline and EDA complete. SARIMA and LSTM models (univariate, multivariate, seq2seq) implemented and trained; evaluation framework (`src/evaluation_utils.py`) built. Next up: running the persistence/climatology baselines and a standardized cross-model comparison (denormalized to Mkm²).
 
 ## Key Features
 
@@ -27,7 +27,7 @@ This project builds a complete pipeline for Arctic sea ice extent anomaly predic
 ## Setup
 
 ### Prerequisites
-- Python 3.10+
+- [uv](https://docs.astral.sh/uv/) (manages the Python version and dependencies)
 - PostgreSQL with PostGIS extension
 - CDS API account (free registration at https://cds.climate.copernicus.eu/)
 - ~50GB disk space for raw data
@@ -40,27 +40,30 @@ git clone https://github.com/CatraMyBeloved/arctic-ice-extent.git
 cd arctic-ice-extent
 ```
 
-2. Set up Python environment:
+2. Set up the environment:
 ```bash
-python setup_env.py
+uv sync
 ```
 
-This creates a virtual environment and installs dependencies from `requirements.in`.
+This creates a `.venv` and installs all dependencies from `pyproject.toml` (Python version is pinned in `.python-version` and fetched automatically by uv). Run commands in the environment with `uv run`, e.g. `uv run jupyter lab`.
 
 3. Configure CDS API credentials:
 
-Create `~/.cdsapirc` with your credentials:
+Create `~/.cdsapirc` with your Personal Access Token (from your CDS profile page):
 ```
-url: https://cds.climate.copernicus.eu/api/v2
-key: <your-uid>:<your-api-key>
+url: https://cds.climate.copernicus.eu/api
+key: <your-personal-access-token>
 ```
 
-4. Configure database connection:
-
-Edit notebook connection strings or create environment variables:
-```python
-DATABASE_URL = 'postgresql://postgres:password@localhost:5432/seaice'
+4. Start the PostgreSQL + PostGIS database:
+```bash
+podman compose up -d    # or: docker compose up -d
 ```
+
+This launches a `postgis/postgis` container matching the connection string used in the code
+(`postgresql://postgres:password@localhost:5432/seaice`), with data persisted in a named volume.
+See [docs/database.md](docs/database.md) for details, lifecycle commands, and the one-time
+Podman socket setup. The ingestion notebooks create the `ice_extent_*` tables on first run.
 
 5. Run data ingestion notebooks:
 - `notebooks/01a_data_ingestion_era5_download.ipynb` - Download ERA5 via CDS API
@@ -78,6 +81,7 @@ DATABASE_URL = 'postgresql://postgres:password@localhost:5432/seaice'
 ├── src/                  # Reusable utility functions
 │   ├── data_utils.py     # Data loading and merging
 │   ├── coordinate_utils.py  # Geospatial transformations
+│   ├── evaluation_utils.py  # Metrics, baseline models, backtesting, comparison
 │   └── plot_utils.py     # Visualization helpers
 ├── utilities/            # Scripts for data downloads
 └── docs/                 # Project planning and documentation
@@ -99,7 +103,7 @@ This project systematically explores:
 - [x] **Phase 2**: Exploratory data analysis
 - [x] **Phase 3**: Baseline models (persistence, climatology, linear regression)
 - [x] **Phase 4**: Time series models with lagged features
-- [ ] **Phase 5**: LSTM experimentation (**I PROGRESS**) 
+- [ ] **Phase 5**: LSTM experimentation (**IN PROGRESS**)
 - [ ] **Phase 6**: Advanced CNN-LSTM spatial-temporal modeling
 
 See [docs/project_plan.md](docs/project_plan.md) for detailed milestones.

@@ -670,19 +670,20 @@ Before considering model evaluation "complete", verify:
 
 ## Implementation Roadmap
 
-**Phase 1**: Baseline Implementation (`notebooks/03b_baseline_models.ipynb`)
-- Implement persistence and climatology models
-- Evaluate on test set (2020-2023)
-- Document baseline performance
+**Phase 1**: Baseline Implementation (`notebooks/03b_baseline_models.ipynb`) — ⏳ In Progress
+- ✅ Persistence and climatology models available as classes in `src/evaluation_utils.py` (`PersistenceModel`, `ClimatologyModel`)
+- ⏳ Evaluate on test set (2020-2023) — notebook is currently a stub
+- ⏳ Document baseline performance
 
-**Phase 2**: Evaluation Utilities (`src/evaluation_utils.py`)
-- Denormalization functions
-- Metric computation functions (RMSE, MAE, MAPE, skill scores, ACC)
-- Baseline model classes
-- Backtesting framework
-- Results logging functions
+**Phase 2**: Evaluation Utilities (`src/evaluation_utils.py`) — ✅ Built
+- ✅ Denormalization functions
+- ✅ Metric computation functions (RMSE, MAE, MAPE, skill scores, ACC)
+- ✅ Baseline model classes
+- ✅ Backtesting framework (`TimeSeriesExpandingWindow`, `run_backtesting`)
+- ✅ Results logging and comparison functions
+- Note: module is code-complete but not yet exercised end-to-end in a notebook
 
-**Phase 3**: Comprehensive Comparison (`notebooks/07_model_comparison.ipynb`)
+**Phase 3**: Comprehensive Comparison (`notebooks/07_model_comparison.ipynb`) — ⏳ Planned
 - Load all models (SARIMA, LSTM, Seq2Seq)
 - Denormalize LSTM predictions
 - Compute standardized metrics
@@ -691,10 +692,10 @@ Before considering model evaluation "complete", verify:
 - Visualization generation
 - Results export
 
-**Phase 4**: Backtesting (optional enhancement)
-- Implement expanding window CV
-- Retrain models on multiple folds
-- Aggregate metrics with confidence intervals
+**Phase 4**: Backtesting (optional enhancement) — ⏳ Partially built
+- ✅ Expanding-window CV implemented in `src/evaluation_utils.py`
+- ⏳ Retrain models on multiple folds
+- ⏳ Aggregate metrics with confidence intervals
 
 ---
 
