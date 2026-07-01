@@ -23,11 +23,9 @@ dependencies = [
     "matplotlib",
     "seaborn",
     "plotly",
-    # Machine learning
+    # Machine learning (torch/torchvision live in the cpu/gpu extras below)
     "scikit-learn",
     "keras",
-    "torch",
-    "torchvision",
     # Statistics & time series
     "statsmodels",
     "prophet",
@@ -47,19 +45,41 @@ dependencies = [
     # Validation & performance
     "pydantic",
     "numba",
+    "tabulate>=0.10.0",
 ]
+
+[project.optional-dependencies]
+# Choose exactly one when syncing:
+#   laptop / CPU:  uv sync --extra cpu
+#   4060 / CUDA:   uv sync --extra gpu
+cpu = ["torch", "torchvision"]
+gpu = ["torch", "torchvision"]
 
 [tool.uv]
 # Notebook/analysis project — not an installable package, so uv skips building it.
 package = false
+# cpu and gpu are mutually exclusive: they source torch from different indexes.
+conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]
 
-# Pull CPU-only torch/torchvision (skips the ~5GB CUDA/NVIDIA stack).
-# On a GPU machine, point these at the matching CUDA index instead (e.g. .../whl/cu124).
+# CPU wheels (small; skips the ~5GB CUDA/NVIDIA stack) for the laptop.
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
+# CUDA 12.8 wheels for the 4060 (Ada); this carries the recent torch that matches
+# the CPU build. Adjust the suffix if your driver needs a different CUDA.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
 [tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
-torchvision = [{ index = "pytorch-cpu" }]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu128", extra = "gpu" },
+]
+torchvision = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu128", extra = "gpu" },
+]

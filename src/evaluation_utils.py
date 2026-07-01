@@ -218,6 +218,53 @@ def compute_anomaly_correlation(y_true: np.ndarray,
     return np.corrcoef(anomaly_true, anomaly_pred)[0, 1]
 
 
+def diebold_mariano_test(y_true: np.ndarray,
+                         y_pred_a: np.ndarray,
+                         y_pred_b: np.ndarray,
+                         h: int = 1,
+                         power: int = 2) -> Tuple[float, float]:
+    """Diebold-Mariano test for equal predictive accuracy of two forecasts.
+
+    Tests the null hypothesis that forecasts A and B have equal accuracy against
+    the alternative that they differ. Uses the Harvey-Leybourne-Newbold small-
+    sample correction. A negative statistic means A has the smaller loss (A is
+    better); the p-value says whether the difference is significant.
+
+    Args:
+        y_true: Observed values.
+        y_pred_a: First model's forecasts (aligned with y_true).
+        y_pred_b: Second (benchmark) model's forecasts.
+        h: Forecast horizon (steps ahead); controls the autocovariance lags used.
+        power: Loss power (2 = squared error, 1 = absolute error).
+
+    Returns:
+        (dm_statistic, p_value) using a two-sided Student-t reference with n-1 df.
+        stat < 0 -> A better than B; p < 0.05 -> difference is significant.
+    """
+    from scipy import stats as _stats
+
+    y_true = np.asarray(y_true, dtype=float)
+    e_a = np.abs(y_true - np.asarray(y_pred_a, dtype=float)) ** power
+    e_b = np.abs(y_true - np.asarray(y_pred_b, dtype=float)) ** power
+    d = e_a - e_b
+    n = len(d)
+
+    d_mean = d.mean()
+    # Long-run variance using autocovariances up to lag h-1.
+    gamma0 = np.mean((d - d_mean) ** 2)
+    gamma = [np.mean((d[k:] - d_mean) * (d[:-k] - d_mean)) for k in range(1, h)]
+    var_d = (gamma0 + 2 * np.sum(gamma)) / n
+    if var_d <= 0:
+        return float("nan"), float("nan")
+
+    dm = d_mean / np.sqrt(var_d)
+    # Harvey-Leybourne-Newbold small-sample correction.
+    correction = np.sqrt((n + 1 - 2 * h + h * (h - 1) / n) / n)
+    dm *= correction
+    p_value = 2 * _stats.t.cdf(-abs(dm), df=n - 1)
+    return float(dm), float(p_value)
+
+
 def compute_all_metrics(y_true: np.ndarray,
                        y_pred: np.ndarray,
                        y_baseline_persistence: Optional[np.ndarray] = None,
