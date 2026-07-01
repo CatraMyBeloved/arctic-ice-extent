@@ -1,0 +1,65 @@
+[project]
+name = "arctic-ice-extent"
+version = "0.1.0"
+description = "Arctic sea ice extent forecasting using NSIDC observations and ERA5 reanalysis"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Ole Stein" }]
+dependencies = [
+    # Data manipulation
+    "pandas",
+    "polars",
+    "numpy",
+    "scipy",
+    # Geospatial / climate data
+    "xarray",
+    "netcdf4",
+    "zarr",
+    "geopandas",
+    "shapely",
+    "regionmask",
+    "cdsapi",
+    # Visualization
+    "matplotlib",
+    "seaborn",
+    "plotly",
+    # Machine learning
+    "scikit-learn",
+    "keras",
+    "torch",
+    "torchvision",
+    # Statistics & time series
+    "statsmodels",
+    "prophet",
+    # Jupyter
+    "jupyter",
+    "jupyterlab",
+    "ipywidgets",
+    # Data I/O
+    "openpyxl",
+    "pyarrow",
+    "requests",
+    "beautifulsoup4",
+    # Database & big data
+    "sqlalchemy",
+    "psycopg2-binary",
+    "dask",
+    # Validation & performance
+    "pydantic",
+    "numba",
+]
+
+[tool.uv]
+# Notebook/analysis project — not an installable package, so uv skips building it.
+package = false
+
+# Pull CPU-only torch/torchvision (skips the ~5GB CUDA/NVIDIA stack).
+# On a GPU machine, point these at the matching CUDA index instead (e.g. .../whl/cu124).
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
