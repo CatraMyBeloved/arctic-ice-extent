@@ -178,8 +178,8 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 **Next Steps** (Phase 2-3 of Scientific Rigor Plan):
 
-1. Implement baseline models (persistence, climatology) - `notebooks/03b_baseline_models.ipynb`
-2. Create evaluation framework (`src/evaluation_utils.py`) with denormalization functions
+1. ✅ Evaluation framework built (`src/evaluation_utils.py`): denormalization, metrics, `PersistenceModel`/`ClimatologyModel`, expanding-window backtesting, and results logging/comparison utilities
+2. Apply the baselines on the test set in `notebooks/03b_baseline_models.ipynb` (currently a stub) and record results
 3. Comprehensive comparison notebook (`notebooks/07_model_comparison.ipynb`) with all models on identical metrics
 
 ---
@@ -479,17 +479,17 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
    * Temperature-ice extent correlation with seasonal coloring
    * Trend analysis using linear regression
 
-5. **03\_baselines.ipynb**
-   * Climatology computation for all regions and variables
-   * Day-of-year mean patterns
-   * Visual comparison of climatology across regions
-
-6. **03\_sarima\_baseline.ipynb**
+5. **03a\_sarima\_baseline.ipynb**
    * SARIMA models on monthly aggregated data
    * Model 1: SARIMA on raw extent values
    * Model 2: SARIMA on anomaly values
    * Train/test split (1979-2018 / 2019-2023)
    * Performance metrics and residual diagnostics
+
+6. **03b\_baseline\_models.ipynb** (In Progress — stub)
+   * Intended: persistence (y\_t+1 = y\_t) and climatology (day-of-year mean) baselines evaluated on 2020-2023
+   * Model classes ready in `src/evaluation_utils.py` (`PersistenceModel`, `ClimatologyModel`)
+   * Currently contains early climatology exploration; baseline evaluation on the test set not yet run
 
 7. **04\_basic\_lstm.ipynb** (Completed)
    * PyTorch LSTM implementation (2-layer, 64 hidden units)
@@ -527,14 +527,7 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 **Planned Notebooks** (High Priority for Scientific Rigor)
 
-11. **03b\_baseline\_models.ipynb** (Planned - HIGH PRIORITY)
-    * Persistence baseline (y_t+1 = y_t)
-    * Climatology baseline (day-of-year mean)
-    * Evaluation on 2020-2023 test period
-    * Seasonal breakdown (winter vs summer)
-    * Establishes minimum skill thresholds for all models
-
-12. **07\_model\_comparison.ipynb** (Planned - HIGH PRIORITY)
+11. **07\_model\_comparison.ipynb** (Planned - HIGH PRIORITY)
     * Load all trained models (SARIMA, LSTM variants, Seq2Seq)
     * **Denormalize LSTM predictions to Mkm²** (critical step)
     * Unified evaluation on identical test set (2020-2023 daily)
@@ -546,12 +539,12 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 **Planned Notebooks** (Lower Priority)
 
-13. **05\_ml\_baselines.ipynb** (Planned)
+12. **05\_ml\_baselines.ipynb** (Planned)
     * Linear regression, Ridge, Lasso, Random Forest, XGBoost
     * Multi-horizon predictions (+7, +14, +30 days)
     * Skill scores vs persistence and climatology
 
-14. **08\_time\_series\_backtesting.ipynb** (Planned)
+13. **08\_time\_series\_backtesting.ipynb** (Planned)
     * Expanding window cross-validation
     * Retrain models on multiple time periods (2019, 2020, 2021, 2022, 2023 test folds)
     * Aggregate metrics with confidence intervals
@@ -559,28 +552,28 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 **Planned Notebooks** (Phase 4.1 - Uncertainty & Extended Horizons)
 
-15. **09\_lstm\_ensemble.ipynb** (Planned)
+14. **09\_lstm\_ensemble.ipynb** (Planned)
     * Train 10 LSTM models with different random seeds
     * Ensemble prediction statistics (mean, std, percentiles)
     * Epistemic uncertainty analysis from ensemble spread
     * Comparison: ensemble mean vs best single model
     * Computational cost analysis
 
-16. **10\_mc\_dropout.ipynb** (Planned)
+15. **10\_mc\_dropout.ipynb** (Planned)
     * Implement MC Dropout inference (50-100 forward passes)
     * Generate prediction intervals and uncertainty estimates
     * Reliability diagrams and calibration analysis
     * Compare MC Dropout vs ensemble uncertainty
     * Correlation between uncertainty and prediction errors
 
-17. **11\_autoregressive\_lstm.ipynb** (Planned)
+16. **11\_autoregressive\_lstm.ipynb** (Planned)
     * Autoregressive forecasting loop implementation
     * Extended horizons: 14-day and 30-day predictions
     * Error accumulation analysis over forecast lead time
     * Comparison: autoregressive vs Seq2Seq approaches
     * Uncertainty growth with horizon length
 
-18. **12\_attention\_seq2seq.ipynb** (Planned)
+17. **12\_attention\_seq2seq.ipynb** (Planned)
     * Enhanced encoder-decoder with attention mechanism
     * Teacher forcing with scheduled sampling
     * Bidirectional encoder experiments
@@ -589,26 +582,26 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 **Planned Notebooks** (Phase 6 - CNN-LSTM)
 
-19. **13\_era5\_spatial\_preprocessing.ipynb** (Planned)
+18. **13\_era5\_spatial\_preprocessing.ipynb** (Planned)
     * Download gridded ERA5 data (T2M, MSLP, SST, SIC)
     * Regrid to Arctic Stereographic (EPSG:3411)
     * Downsample to 64×64 and 128×128 grids
     * Create multi-channel image sequences
     * Save to zarr/HDF5 format
 
-20. **14\_cnn\_encoder.ipynb** (Planned)
+19. **14\_cnn\_encoder.ipynb** (Planned)
     * CNN spatial encoder implementation (ResNet/VGG-style)
     * Feature extraction from gridded weather data
     * Optional pre-training on auxiliary task
     * Spatial feature visualization
 
-21. **15\_cnn\_lstm\_hybrid.ipynb** (Planned)
+20. **15\_cnn\_lstm\_hybrid.ipynb** (Planned)
     * Full CNN-LSTM pipeline: spatial encoding + temporal modeling
     * Hybrid architecture (CNN features + tabular features)
     * Multi-horizon prediction variants
     * Training with gradient checkpointing
 
-22. **16\_cnn\_lstm\_evaluation.ipynb** (Planned)
+21. **16\_cnn\_lstm\_evaluation.ipynb** (Planned)
     * Performance comparison vs aggregated-feature LSTM
     * Ablation studies (CNN-only, tabular-only, hybrid)
     * Spatial resolution impact (64×64 vs 128×128)
@@ -634,8 +627,8 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 **Evaluation & Validation** (In Progress - CRITICAL for Scientific Rigor):
 * ✅ SARIMA evaluated with RMSE/MAE/MAPE in Mkm²
-* ⏳ Baseline models implemented (persistence, climatology) - HIGH PRIORITY
-* ⏳ Evaluation framework created (`src/evaluation_utils.py`) - HIGH PRIORITY
+* ✅ Baseline model **classes** implemented (`PersistenceModel`, `ClimatologyModel` in `src/evaluation_utils.py`); baseline evaluation notebook (`03b_baseline_models.ipynb`) started but not yet run on the test set - HIGH PRIORITY
+* ✅ Evaluation framework created (`src/evaluation_utils.py`): denormalization, metrics (RMSE/MAE/MAPE/skill score/ACC), baseline models, expanding-window backtesting, and results logging/comparison utilities
 * ⏳ LSTM predictions denormalized to Mkm² - HIGH PRIORITY
 * ⏳ All models evaluated on identical test set with standardized metrics - HIGH PRIORITY
 * ⏳ Statistical significance testing (model comparisons) - HIGH PRIORITY
