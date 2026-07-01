@@ -28,9 +28,9 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 ### 3.1 NSIDC Sea Ice Index
 
 * **Data format**: Pre-computed CSV tables from NSIDC G02135 v4.0
-  * Pan-Arctic daily extent: `N_seaice_extent_daily_v3.0.csv`
+  * Pan-Arctic daily extent: `N_seaice_extent_daily_v4.0.csv`
   * Regional daily extent: `N_Sea_Ice_Index_Regional_Daily_Data_G02135_v4.0.xlsx`
-  * Climatology (1981-2010): `N_seaice_extent_climatology_1981-2010_v3.0.csv`
+  * Climatology (1981-2010): `N_seaice_extent_climatology_1981-2010_v4.0.csv`
 * **Regions covered**: 14 Arctic regions (Baffin, Barents, Beaufort, Bering, Canadian Archipelago, Central Arctic, Chukchi, East Siberian, Greenland, Hudson, Kara, Laptev, Okhotsk, St. Lawrence) plus pan-arctic
 * **Storage**: PostgreSQL tables with extent in million km² (Mkm²) units
 
@@ -118,15 +118,20 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
    * Day-of-year mean climatology computed for all regions
    * Used as benchmark for anomaly calculations
 
-2. **SARIMA models** (Completed)
+2. **Persistence baseline** (Completed)
+
+   * Daily persistence (y_t+1 = y_t) evaluated on 2020-2023 in `03b_baseline_models.ipynb`
+   * RMSE ≈ 0.087 Mkm² — the hard bar to beat at daily scale
+
+3. **SARIMA models** (Completed)
 
    * Monthly aggregation of daily data to make SARIMA tractable
    * Model 1: SARIMA(1,0,1)×(0,1,1,12) on raw extent values
    * Model 2: SARIMA(2,0,2)×(1,0,1,12) on anomaly values
-   * 40-year training period (1979-2018), 5-year test set (2019-2023)
-   * Performance metrics: RMSE ~0.36-0.40 Mkm², MAE ~0.27-0.33 Mkm², MAPE ~3.5-4%
+   * Train 1989-2019 / test 2020-2023 (48 months), **1-month-ahead walk-forward**
+   * Performance: SARIMA_raw RMSE ≈ 0.227 Mkm² (skill vs persistence +0.88, vs climatology +0.72)
 
-3. **Simple ML models** (Pending)
+4. **Simple ML models** (Pending)
 
    * Linear regression, Ridge, Lasso
    * Random Forest, XGBoost
@@ -157,30 +162,41 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
     * Univariate: ~0.001419 validation loss
     * Multivariate: ~0.001631 validation loss
 
+**Rebuilt (this session)**: The LSTM code was consolidated into `src/lstm_utils.py`
+(shared datasets/model/training loop), fixing a **test-set leakage bug** — the old
+notebooks used the 2020-2023 test set for early stopping and checkpoint selection.
+Training now uses a **three-way temporal split**: train 1989-2014, validation
+2015-2019 (model selection), test 2020-2023 (held out). Runs are seeded, save
+self-contained checkpoint bundles (weights + scaler + config + split), and the
+data is auto-bootstrapped via `src/data_bootstrap.ensure_extent_data()`.
+
 **Validation Status** (What has been evaluated):
 
 * [x] Training convergence verified (all models reached early stopping)
-* [x] Validation loss tracking completed (normalized MSE during training)
-* [ ] **Denormalization to Mkm²** for fair comparison ← CRITICAL GAP
-* [ ] **Evaluation against persistence baseline** ← CRITICAL GAP
-* [ ] **Evaluation against climatology baseline** ← CRITICAL GAP
-* [ ] **Statistical significance testing** of feature contributions (ablation studies)
-* [ ] **Seasonal performance breakdown** (winter vs summer)
-* [ ] **Multi-horizon error accumulation analysis** (Seq2Seq day 1-7)
-* [ ] **Comparison to SARIMA** on identical test set with denormalized metrics
+* [x] **Denormalization to Mkm²** for fair comparison (built into evaluation)
+* [x] **Evaluation against persistence & climatology baselines** — univariate LSTM
+  (04) done: RMSE 0.073 Mkm², beats persistence (skill +0.168), logged to
+  `results/model_comparison.csv`
+* [x] **Seasonal performance breakdown** (winter vs summer) for 04
+* [ ] Multivariate (05) and Seq2Seq (06) evaluated — **refactored & ready, pending a GPU-box run** (need ERA5 parquet)
+* [ ] **Statistical significance testing** (Diebold-Mariano) — in `07_model_comparison.ipynb`
+* [ ] Feature ablation significance (05 variants loop provides the comparison; significance pending)
 * [ ] **Comprehensive lessons documented**
 
 **Important Notes**:
 
-* **Normalized metrics not directly comparable**: Validation losses reported in normalized units (mean=0, std=1). Must denormalize to Mkm² before comparing to SARIMA (RMSE ~0.36 Mkm²) or baselines.
-* **Features exploratory, not validated**: Lagged features and cyclical encoding added without ablation studies to confirm value. Lower validation loss observed but statistical significance not tested.
-* **No baseline comparisons yet**: Cannot assess whether LSTM models beat trivial forecasts (persistence/climatology) until denormalization and standardized evaluation completed.
+* **Leakage fixed**: previous results selected the model on the test set; all new
+  results use a held-out validation era, so they are comparable to the baselines.
+* **Compute is not the bottleneck at this stage**: these 1-D models train in
+  minutes even on CPU. The 4060's headroom is best spent on sweeps/seeds/ensembles
+  now, and on the spatial CNN-LSTM (Phase 6) later.
 
-**Next Steps** (Phase 2-3 of Scientific Rigor Plan):
+**Next Steps**:
 
-1. ✅ Evaluation framework built (`src/evaluation_utils.py`): denormalization, metrics, `PersistenceModel`/`ClimatologyModel`, expanding-window backtesting, and results logging/comparison utilities
-2. Apply the baselines on the test set in `notebooks/03b_baseline_models.ipynb` (currently a stub) and record results
-3. Comprehensive comparison notebook (`notebooks/07_model_comparison.ipynb`) with all models on identical metrics
+1. ✅ Evaluation framework built (`src/evaluation_utils.py`) and baselines logged (03a/03b)
+2. ✅ LSTM infrastructure rebuilt (`src/lstm_utils.py`, `src/train.py`); univariate (04) evaluated
+3. Run multivariate (05) and seq2seq (06) on the GPU box to fill in their rows
+4. Comprehensive comparison + significance in `notebooks/07_model_comparison.ipynb`
 
 ---
 
@@ -352,7 +368,7 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 * [x] Climatology baseline computed
 * [x] SARIMA models trained and evaluated (monthly data)
-* [ ] Persistence baseline (daily data)
+* [x] Persistence baseline (daily data) — RMSE ≈ 0.087 Mkm²
 * [ ] Simple ML models (Linear, Ridge, Random Forest, XGBoost)
 * [ ] Multi-horizon predictions (+7, +14, +30 days)
 
@@ -371,20 +387,19 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 **M5 – LSTM Experiments**
 
 **Implementation**:
-* [x] Basic LSTM architecture implemented (2-layer, 64 hidden, univariate)
-* [x] Multivariate LSTM variants implemented (non-lagged, lagged, cyclical)
-* [x] Seq2Seq LSTM implemented (7-day multi-horizon, vanilla encoder-decoder)
-* [x] Training pipeline with early stopping, dropout, gradient clipping, LR scheduling
-* [x] Models trained on 30-year dataset (1989-2019, test 2020-2023)
+* [x] Shared engine `src/lstm_utils.py` (datasets, model, seeded/AMP training, 3-way split, checkpoint bundles)
+* [x] Headless CLI `src/train.py` and data bootstrap `src/data_bootstrap.py`
+* [x] Basic (04), multivariate (05), seq2seq (06) notebooks refactored onto the engine
+* [x] Test-set leakage fixed via held-out validation era (2015-2019)
 
-**Validation** ← CRITICAL GAP:
+**Validation**:
 * [x] Training convergence verified (validation loss tracking)
-* [ ] **Denormalization and metric standardization** (convert to Mkm²)
-* [ ] **Comprehensive evaluation vs baselines** (persistence, climatology)
-* [ ] **Statistical validation of feature contributions** (ablation studies, significance tests)
-* [ ] **Seasonal performance breakdown** (winter vs summer)
-* [ ] **Multi-horizon error analysis** (Seq2Seq day 1-7 error accumulation)
-* [ ] **Model comparison** (all models on identical test set with identical metrics)
+* [x] **Denormalization and metric standardization** (Mkm²) — built into evaluation
+* [x] **Evaluation vs baselines** for univariate (04); 05/06 pending GPU run
+* [x] **Seasonal performance breakdown** (winter vs summer) for 04
+* [ ] **Statistical significance** (Diebold-Mariano) — in `07_model_comparison.ipynb`
+* [ ] **Multi-horizon error analysis** (Seq2Seq day 1-7) — 06 pending GPU run
+* [ ] **Model comparison** (all models, identical metrics) — `07_model_comparison.ipynb`
 * [ ] **Lessons documented** (what worked, what didn't, why)
 
 **M5.1 – Uncertainty Quantification & Extended Horizons**
@@ -479,45 +494,34 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
    * Temperature-ice extent correlation with seasonal coloring
    * Trend analysis using linear regression
 
-5. **03a\_sarima\_baseline.ipynb**
-   * SARIMA models on monthly aggregated data
-   * Model 1: SARIMA on raw extent values
-   * Model 2: SARIMA on anomaly values
-   * Train/test split (1979-2018 / 2019-2023)
-   * Performance metrics and residual diagnostics
+5. **03a\_sarima\_baseline.ipynb** (Completed)
+   * Two SARIMA models on monthly aggregated extent (raw + anomaly), loaded direct from the DB
+   * **1-month-ahead walk-forward** evaluation (train 1989-2019 / test 2020-2023, 48 months)
+   * Logged to `results/model_comparison.csv` at `scale="monthly"` alongside monthly baselines
+   * Key result: SARIMA_raw RMSE ≈ 0.227 Mkm² (skill vs persistence +0.88, vs climatology +0.72)
 
-6. **03b\_baseline\_models.ipynb** (In Progress — stub)
-   * Intended: persistence (y\_t+1 = y\_t) and climatology (day-of-year mean) baselines evaluated on 2020-2023
-   * Model classes ready in `src/evaluation_utils.py` (`PersistenceModel`, `ClimatologyModel`)
-   * Currently contains early climatology exploration; baseline evaluation on the test set not yet run
+6. **03b\_baseline\_models.ipynb** (Completed)
+   * Persistence (y\_t+1 = y\_t) and climatology (day-of-year mean) baselines evaluated on the
+     2020-2023 daily pan-Arctic test set using `src/evaluation_utils.py`
+   * Results logged to `results/model_comparison.csv`; seasonal breakdown + figure produced
+   * Key result: persistence RMSE ≈ 0.087 Mkm² (the bar to beat); climatology ≈ 1.0 Mkm²
 
-7. **04\_basic\_lstm.ipynb** (Completed)
-   * PyTorch LSTM implementation (2-layer, 64 hidden units)
-   * Univariate: extent_mkm2 only
-   * Custom dataset with 30-day sequence length
-   * Training with early stopping, dropout, gradient clipping
-   * Trained on 1989-2019, tested on 2020-2023
-   * Best validation loss: ~0.002006 (normalized MSE)
+7. **04\_basic\_lstm.ipynb** (Completed & evaluated)
+   * Univariate LSTM (extent only), thin narrative over `src/lstm_utils.py`
+   * Three-way split (train 1989-2014 / val 2015-2019 / test 2020-2023), seeded
+   * Denormalized evaluation vs persistence & climatology, seasonal breakdown, figure
+   * **Result**: RMSE 0.073 Mkm², beats persistence (skill +0.168); logged as `LSTM_Basic_Univariate` (daily)
 
-8. **05\_multivariate\_lstm.ipynb** (Completed)
-   * Three LSTM variants with ERA5 atmospheric variables
-   * **Variant 1 - Non-lagged** (7 features): extent + t2m/msl/wind means/stds
-     * Best validation loss: ~0.000323
-   * **Variant 2 - Lagged** (13 features): base + extent/t2m lags (t-7, t-14, t-30)
-     * Best validation loss: ~0.000306 (best overall)
-   * **Variant 3 - Cyclical** (9 features): base + day_of_year sin/cos
-     * Best validation loss: ~0.000321
-   * Same architecture as basic LSTM (2-layer, 64 hidden, dropout 0.2)
-   * Feature engineering exploration: lags, cyclical encoding
-   * **Note**: Validation losses in normalized units, not yet evaluated vs baselines
+8. **05\_multivariate\_lstm.ipynb** (Refactored — pending GPU run)
+   * Adds ERA5 climate features; a DRY variants loop trains and compares
+     `climate`, `climate+cyclical`, `climate+lags` through the shared engine
+   * Same three-way split and denormalized baseline comparison as 04
+   * Needs the ERA5 parquet store → run on the GPU box; logs best variant (daily)
 
-9. **06\_seq2seq\_lstm.ipynb** (Completed)
-   * Encoder-decoder LSTM for 7-day multi-horizon forecasting
-   * 30-day input sequence → 7-day output sequence
-   * Vanilla architecture (no attention, no teacher forcing)
-   * Multiple variants: univariate, multivariate, cyclical
-   * Best validation losses: ~0.001419-0.001631 (higher than single-step due to multi-day difficulty)
-   * **Note**: Multi-horizon error accumulation analysis pending
+9. **06\_seq2seq\_lstm.ipynb** (Refactored — pending GPU run)
+   * Multi-day (7-day) forecasting: `forecast_horizon=7` on the same engine
+   * Compares univariate / climate / climate+cyclical, plots error-by-forecast-day
+   * Needs ERA5 parquet → run on the GPU box; logs best variant at `scale="multistep_7d"`
 
 **Experiments**
 
@@ -527,15 +531,13 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 **Planned Notebooks** (High Priority for Scientific Rigor)
 
-11. **07\_model\_comparison.ipynb** (Planned - HIGH PRIORITY)
-    * Load all trained models (SARIMA, LSTM variants, Seq2Seq)
-    * **Denormalize LSTM predictions to Mkm²** (critical step)
-    * Unified evaluation on identical test set (2020-2023 daily)
-    * Metrics: RMSE, MAE, MAPE, skill scores vs baselines
-    * Statistical significance testing (Diebold-Mariano)
-    * Seasonal performance analysis (winter vs summer)
-    * Multi-horizon error accumulation (Seq2Seq)
-    * Export consolidated results to `results/model_comparison.csv`
+11. **07\_model\_comparison.ipynb** (Completed — self-updating)
+    * Reads `results/model_comparison.csv` → ranked comparison table per scale
+    * Regenerates daily 1-step predictions from every checkpoint bundle in `models/`
+    * **Diebold-Mariano significance** vs persistence & climatology (added to `evaluation_utils`)
+    * Skill-score chart + seasonal breakdown of the best daily model
+    * Laptop result: univariate LSTM beats persistence significantly (DM ≈ -9.4, p ≈ 0);
+      rerun on the GPU box and the 05/06 rows fill in automatically
 
 **Planned Notebooks** (Lower Priority)
 
@@ -627,15 +629,15 @@ Performance is secondary; the main goal is to **understand tools, data, and meth
 
 **Evaluation & Validation** (In Progress - CRITICAL for Scientific Rigor):
 * ✅ SARIMA evaluated with RMSE/MAE/MAPE in Mkm²
-* ✅ Baseline model **classes** implemented (`PersistenceModel`, `ClimatologyModel` in `src/evaluation_utils.py`); baseline evaluation notebook (`03b_baseline_models.ipynb`) started but not yet run on the test set - HIGH PRIORITY
+* ✅ Baseline models evaluated (persistence, climatology) on the 2020-2023 daily test set via `03b_baseline_models.ipynb`; results in `results/model_comparison.csv` (persistence RMSE ≈ 0.087 Mkm², climatology ≈ 1.0 Mkm²)
 * ✅ Evaluation framework created (`src/evaluation_utils.py`): denormalization, metrics (RMSE/MAE/MAPE/skill score/ACC), baseline models, expanding-window backtesting, and results logging/comparison utilities
-* ⏳ LSTM predictions denormalized to Mkm² - HIGH PRIORITY
-* ⏳ All models evaluated on identical test set with standardized metrics - HIGH PRIORITY
-* ⏳ Statistical significance testing (model comparisons) - HIGH PRIORITY
-* ⏳ Seasonal performance breakdown (winter vs summer) - HIGH PRIORITY
-* ⏳ Feature validation via ablation studies (pending)
-* ⏳ Time-series backtesting framework implemented (pending)
-* ⏳ Multi-horizon error accumulation analysis (pending)
+* ✅ LSTM predictions denormalized to Mkm² (built into `src/lstm_utils` evaluation)
+* ✅ Univariate LSTM (04) evaluated vs baselines on the held-out test set (beats persistence)
+* ✅ Seasonal performance breakdown (winter vs summer) for 04
+* ⏳ Multivariate (05) & seq2seq (06) evaluated — refactored, pending GPU-box run
+* ⏳ All models on one table with significance testing (Diebold-Mariano) — `07_model_comparison.ipynb`
+* ⏳ Feature validation via ablation studies (05 variants loop provides the comparison)
+* ⏳ Time-series backtesting framework applied to LSTMs (pending)
 * ⏳ Comprehensive evaluation documentation (pending)
 
 **Documentation** (Completed - NEW):
