@@ -202,35 +202,96 @@ data is auto-bootstrapped via `src/data_bootstrap.ensure_extent_data()`.
 
 ### Phase 4.1 – Uncertainty Quantification & Extended Horizons
 
-**Implementation Status**: Planned
+**Implementation Status**: Components 1-2 completed on the univariate model (laptop, no ERA5
+needed); rerun on the multivariate/lagged variant once 05/06 have GPU-box results. Component 3
+scoped (autoregression dropped, see below). Component 4 still planned.
 
 **Goal**: Extend LSTM experiments to quantify prediction uncertainty and evaluate longer forecast horizons using ensemble methods, dropout-based uncertainty, and autoregressive architectures.
 
 **Components**:
 
-1. **LSTM Ensemble (10 Models)**
+1. **LSTM Ensemble (10 Models)** — `09_lstm_ensemble.ipynb` (Completed, univariate)
    * Train 10 independent LSTM models with different random initializations
-   * Use best-performing architecture from Phase 4 (multivariate lagged variant)
+   * Use best-performing architecture from Phase 4 (multivariate lagged variant) — run on the
+     univariate model for now since it needs no ERA5 data; rerun on 05's best variant later
    * Generate prediction intervals from ensemble spread (mean, std, percentiles)
    * Compare ensemble mean vs single-model performance
    * Analyze inter-model variance as proxy for epistemic uncertainty
    * Document computational costs and convergence patterns across ensemble members
+   * **Result**: member RMSE 0.0602 ± 0.0004 (tight — 10 seeds converge to nearly the same
+     function), ensemble mean RMSE 0.0597, skill vs persistence +0.316 (significant, DM p ≈ 0).
+     Ensemble beats a *typical* member (DM p = 0.022) but not every member individually. **90%
+     interval PICP only 0.170** (badly overconfident) — epistemic (inter-seed) spread massively
+     underestimates real error here, since all seeds land in a near-identical solution.
 
-2. **MC Dropout for Uncertainty Estimation**
+2. **MC Dropout for Uncertainty Estimation** — `10_mc_dropout.ipynb` (Completed, univariate)
    * Implement Monte Carlo Dropout during inference (dropout enabled at test time)
    * Generate N forward passes per input (e.g., N=50 or N=100)
    * Compute prediction statistics: mean, standard deviation, confidence intervals
    * Compare MC Dropout uncertainty estimates vs ensemble uncertainty
    * Analyze uncertainty calibration (reliability diagrams)
    * Evaluate whether high-uncertainty predictions correlate with higher errors
+   * **Result**: added a `head_dropout` param to `IceExtentLSTM` for this purpose. With
+     `head_dropout=0.3`, point-forecast RMSE got *worse* (0.095, skill vs persistence **-0.089** —
+     not significantly different from persistence, DM p = 0.136), evidently too much regularization
+     for this small a hidden layer. **90% interval PICP 0.938** (close to nominal, unlike the
+     ensemble) but **MPIW ~36x wider** than the ensemble's — well-covered mostly by being very wide,
+     not by being precisely calibrated. Combined with Component 1: neither method's uncertainty
+     correlates strongly with actual error (corr ≈ 0.15 and 0.04 respectively), suggesting this
+     model's error is mostly aleatoric, not epistemic — a genuinely calibrated interval would likely
+     need a distribution-modeling approach (e.g. quantile regression) rather than more UQ tuning.
 
-3. **Autoregressive Predictions for Extended Horizons**
-   * Implement autoregressive forecasting loop: use t+1 prediction as input for t+2
-   * Extend forecast horizon beyond 7 days (test 14-day and 30-day horizons)
-   * Compare autoregressive single-step LSTM vs direct Seq2Seq multi-step predictions
-   * Analyze error accumulation patterns over extended horizons
-   * Evaluate uncertainty growth with forecast lead time
-   * Document trade-offs: flexibility (single-step) vs stability (Seq2Seq)
+3. **Direct Multi-Horizon Seq2Seq for Extended Horizons** (autoregression dropped — see below)
+
+   **Why this component matters now, precisely:** the residual-diagnostics dive after Components
+   1-2 found that the univariate 1-day model's RMSE (0.0593 Mkm²) sits almost exactly on NSIDC's
+   own documented daily-extent measurement uncertainty (~0.06 Mkm², 2σ) — see `results/` /
+   `07_model_comparison.ipynb` findings. Further 1-day-horizon work has limited headroom: we're
+   close to the precision limit of the data itself, not the model. Extended horizons are where the
+   open scientific questions actually are now — chasing a data-noise floor at 1 day is a lower
+   priority than mapping how far into the future the model still beats trivial baselines at all.
+
+   **Goal**: build the **skill-decay curve** — RMSE/skill vs persistence & climatology across lead
+   time — and find the crossover lead time where skill drops to ≤0 (the point past which the model
+   is no more useful than a trivial baseline). Also check whether short-lead-time RMSE (1-3 days,
+   read off the shortest-horizon model) still sits near the ~0.06 Mkm² floor, or whether climate
+   features (05/06) move it — that's the test for whether the daily floor was data-precision-limited
+   or information-limited.
+
+   **Separate models per target horizon, not one shared-output model.** Extend `forecast_horizon`
+   to 14-day and 30-day as their own dedicated training runs (own `IceExtentLSTM` instance, own
+   `train_model` call each), alongside the existing 7-day model from `06_seq2seq_lstm` — do **not**
+   train one model with `forecast_horizon=30` and read off day-7/day-14 from its output. This is the
+   classic **"direct" vs "MIMO" multi-horizon tradeoff** in time-series forecasting (Taieb &
+   Hyndman): a single model trained with one aggregate loss across a 30-day output has to compromise
+   across horizons of very different difficulty (day-1 easy, day-30 hard) with no way to protect the
+   easy ones from the hard ones' gradient signal. A model trained end-to-end for exactly one horizon
+   has no such conflict. (A single wide-output MIMO model vs these dedicated models is itself a good
+   later ablation, if the tradeoff turns out to matter in practice — but dedicated models are the
+   default here.)
+   * Train dedicated models at `forecast_horizon` = 14 and 30 (7 already exists)
+   * Build the skill-decay curve across 1/7/14/30-day lead times from the three models together
+   * Analyze error growth over forecast lead time (RMSE/skill curve vs day-ahead)
+   * Evaluate uncertainty growth with forecast lead time (pairs with ensemble/MC
+     Dropout from Components 1-2)
+
+   **Why not autoregressive:** an autoregressive loop (feed the t+1 prediction back
+   in as input for t+2) only works cleanly for the univariate model. For the
+   multivariate/climate-feature models it silently requires *future* climate
+   inputs at every step beyond the first — data that doesn't exist for a genuine
+   future forecast (ERA5 is reanalysis, not a forecast product). We looked at how
+   published sea ice forecasters solve this and none of them solve it this way:
+   IceNet (Andersson et al. 2021, *Nat. Commun.*) predicts all 6 of its future
+   months in a single forward pass from historical-only input channels — it never
+   feeds a predicted month back in, and doesn't even use CMIP6-simulated future
+   atmosphere as forcing. The dynamical alternative (ECMWF's SEAS5) solves it
+   differently again, by coupling atmosphere/ocean/ice into one jointly-integrated
+   model rather than sourcing an external forecast. Direct multi-horizon output
+   from historical inputs only is the approach both traditions converge on, so
+   that's what we do too — extend `forecast_horizon`, not roll predictions forward.
+   (A real future-forcing pipeline, e.g. ECMWF Open Data / `ecmwf-opendata` for the
+   HRES forecast, stays a possible follow-on for genuine operational deployment
+   later, but isn't required for hitting the extended-horizon goal.)
 
 4. **Enhanced Encoder-Decoder LSTM**
    * Implement attention mechanism for Seq2Seq architecture
@@ -239,6 +300,78 @@ data is auto-bootstrapped via `src/data_bootstrap.ensure_extent_data()`.
    * Multi-horizon outputs: 7-day, 14-day, 30-day forecast sequences
    * Compare enhanced Seq2Seq vs vanilla version from Phase 4
    * Analyze attention weights to understand temporal dependencies
+
+5. **Predictive VAE (Variational Seq2Seq)** — `13_predictive_vae.ipynb` (Planned)
+
+   **Motivation, precisely:** Components 1-2 found that both the 10-seed ensemble and MC Dropout
+   correlate weakly with actual error (corr ≈ 0.04 / 0.15 — see their results above) because they
+   measure *epistemic* uncertainty (uncertainty about which weights are right), while the
+   residual-diagnostics dive after them (Ljung-Box + `corr(|residual|, |actual day-to-day change|)
+   = 0.456`) pointed at the dominant error source being *aleatoric* — genuine day-to-day
+   unpredictability the model can't resolve from its own history, concentrated on high-volatility
+   days. A VAE's latent variable is trained explicitly to model a *distribution* of plausible
+   futures given the same context, rather than one point estimate plus a weight-space proxy for
+   uncertainty. Sampling `z` at inference gives a genuinely generative ensemble of trajectories —
+   a structurally different (and better-motivated) way to capture aleatoric spread than dropout
+   noise or inter-seed variance. Runs on the univariate + cyclical-time inputs, so needs no ERA5.
+
+   **Architecture:**
+   * **Encoder**: `nn.LSTM` over the 30-day input window (features: `extent_mkm2`,
+     `day_of_year_sin`, `day_of_year_cos`) → final hidden state `h_T` (size `hidden_size`) →
+     two linear heads `mu = Linear(hidden_size, latent_dim)`, `logvar = Linear(hidden_size,
+     latent_dim)` → reparameterize: `z = mu + exp(0.5*logvar) * eps`, `eps ~ N(0, I)`.
+     Start with `latent_dim` small (8-16) relative to `hidden_size=64` — a bottleneck is the point.
+   * **Decoder**: a second `nn.LSTM`, initial hidden state set from `z` (e.g. `Linear(latent_dim,
+     hidden_size)`), stepped autoregressively across the forecast horizon. **Autoregression is
+     fine here specifically because the only per-step decoder input is `day_of_year_sin/cos` for
+     that future date — calendar arithmetic, always exactly knowable in advance.** This is the
+     same distinction Phase 4.1 Component 3 draws for why autoregression is *not* fine for the
+     climate-feature models: the problem was never autoregression itself, only feeding forward
+     something not actually knowable (future weather). Each decoder step outputs a scalar extent
+     prediction via a final `Linear(hidden_size, 1)` head.
+   * **Loss (ELBO)**: `reconstruction_loss + beta * kl_loss`, where `reconstruction_loss` is
+     MSE (or Gaussian NLL, if predicting per-step variance too — a natural stretch goal, since
+     that would give a second, complementary uncertainty estimate) between the decoded sequence
+     and the true future window, and `kl_loss = -0.5 * mean(1 + logvar - mu^2 - exp(logvar))` is
+     the standard closed-form KL divergence against a unit Gaussian prior.
+   * **Inference modes**: `mu` directly (no sampling) → point forecast, evaluated in `07`'s table
+     exactly like every other model. Sample `z` N times (e.g. N=50, matching MC Dropout's pass
+     count for a fair comparison) → probabilistic ensemble, evaluated with the same
+     `picp`/`mpiw`/`reliability_curve` helpers already built for 09/10.
+
+   **Training details to get right:**
+   * **KL annealing is not optional here** — ramp `beta` linearly from 0 to its target value over
+     the first ~30-50% of training (a `kl_weight_warmup_epochs` config field). Starting at full
+     `beta` risks posterior collapse (the decoder ignores `z` entirely, especially plausible given
+     the "regression to the mean" tendency already observed in the plain LSTM) before the encoder
+     has learned anything useful to put in `z`.
+   * Watch `kl_loss` during training: if it collapses to ~0 early and stays there, that's collapse
+     — mitigations in order of effort: lower `beta`, add free-bits (clamp per-dimension KL to a
+     minimum), or feed `z` into *every* decoder step (concatenated with the day-of-year input)
+     instead of only as the initial hidden state, which makes it harder for the decoder to ignore.
+   * `latent_dim` and `beta` are the two new hyperparameters to sweep; keep `hidden_size`/
+     `num_layers` at the same starting points as `06`/`11` rather than tuning everything at once.
+
+   **Infra additions needed (small, scoped):**
+   * `load_checkpoint` in `lstm_utils.py` currently hardcodes rebuilding an `IceExtentLSTM`
+     regardless of the saved `model_class` field — needs a dispatch fix (e.g. a small registry
+     dict) before a second model class can round-trip through checkpoints.
+   * New `PredictiveVAE` model class (separate from `IceExtentLSTM`, doesn't belong in the same
+     class — different forward signature, different loss) and a dedicated training loop (own ELBO
+     loss, not `train_model`'s plain MSE) — natural home is a new `src/vae_utils.py` mirroring
+     `lstm_utils.py`'s structure (`TrainConfig`-equivalent with `latent_dim`/`beta`/
+     `kl_weight_warmup_epochs` added, `train_vae`, `sample_futures`), reusing `SequenceDataset`,
+     `set_seed`, `get_device`, `save_checkpoint`/`load_checkpoint`, and evaluation utilities as-is.
+
+   **Evaluation plan:**
+   * Point-forecast RMSE/skill in `07_model_comparison.ipynb`'s table, same as every other model.
+   * Probabilistic comparison against 09 (ensemble) and 10 (MC Dropout) on identical metrics: PICP/
+     MPIW at 90%, reliability diagram (three-way overlay), `corr(uncertainty, |error|)`. This is the
+     real test — does sampling `z` produce intervals that are both better-calibrated *and* more
+     informative (higher error-correlation) than the two methods already tried?
+   * Target horizon: start with 14-day (dedicated model from Component 3), extend to 30-day only if
+     14-day training is stable (no posterior collapse, sane calibration) — don't parallelize the
+     horizon and the new architecture risk at the same time.
 
 **Evaluation Focus**:
 * Uncertainty quantification metrics: prediction interval coverage, sharpness
@@ -289,8 +422,8 @@ data is auto-bootstrapped via `src/data_bootstrap.ensure_extent_data()`.
    * Output: scalar prediction(s) for pan-Arctic sea ice extent (Mkm²)
    * Multi-horizon variants:
      * Single-step: predict extent at t+1
-     * Seq2Seq: predict extent for t+1 to t+7
-     * Autoregressive: iteratively predict longer horizons (7-30 days)
+     * Seq2Seq: predict extent for t+1 to t+7, extendable to 14-30 days as a direct
+       multi-step output (no autoregressive rollout — see Phase 4.1 Component 3)
 
 4. **Hybrid Architecture (CNN-LSTM + Tabular Features)**
    * Combine CNN-encoded spatial features with region-aggregated tabular features
@@ -397,32 +530,37 @@ data is auto-bootstrapped via `src/data_bootstrap.ensure_extent_data()`.
 * [x] **Denormalization and metric standardization** (Mkm²) — built into evaluation
 * [x] **Evaluation vs baselines** for univariate (04); 05/06 pending GPU run
 * [x] **Seasonal performance breakdown** (winter vs summer) for 04
-* [ ] **Statistical significance** (Diebold-Mariano) — in `07_model_comparison.ipynb`
+* [x] **Statistical significance** (Diebold-Mariano + Holm-Bonferroni) — in `07_model_comparison.ipynb`
 * [ ] **Multi-horizon error analysis** (Seq2Seq day 1-7) — 06 pending GPU run
-* [ ] **Model comparison** (all models, identical metrics) — `07_model_comparison.ipynb`
+* [x] **Model comparison** (all models, identical metrics) — `07_model_comparison.ipynb`
+* [x] **Time-series backtesting** (5-fold expanding window) — `08_time_series_backtesting.ipynb`,
+  univariate LSTM beats persistence in 5/5 folds
 * [ ] **Lessons documented** (what worked, what didn't, why)
 
 **M5.1 – Uncertainty Quantification & Extended Horizons**
 
-**Ensemble Models**:
-* [ ] Train 10-model LSTM ensemble with different initializations
-* [ ] Implement ensemble prediction statistics (mean, std, percentiles)
-* [ ] Evaluate ensemble mean vs single-model performance
-* [ ] Analyze epistemic uncertainty from ensemble spread
-* [ ] Document computational costs across ensemble members
+**Ensemble Models** (Completed, univariate — `09_lstm_ensemble.ipynb`):
+* [x] Train 10-model LSTM ensemble with different initializations
+* [x] Implement ensemble prediction statistics (mean, std, percentiles)
+* [x] Evaluate ensemble mean vs single-model performance — mean RMSE 0.0597 vs member mean
+  0.0602 ± 0.0004; beats a typical member (p=0.022) but not the single best member
+* [x] Analyze epistemic uncertainty from ensemble spread — 90% PICP only 0.170 (badly
+  overconfident: seeds converge to nearly the same function)
+* [x] Document computational costs across ensemble members — ~223s/member on CPU, 2227s total for 10
 
-**MC Dropout**:
-* [ ] Implement MC Dropout inference (50-100 forward passes)
-* [ ] Generate prediction intervals from dropout sampling
-* [ ] Compare MC Dropout vs ensemble uncertainty estimates
-* [ ] Analyze uncertainty calibration (reliability diagrams)
-* [ ] Evaluate high-uncertainty prediction correlation with errors
+**MC Dropout** (Completed, univariate — `10_mc_dropout.ipynb`):
+* [x] Implement MC Dropout inference (50-100 forward passes) — added `head_dropout` to `IceExtentLSTM`
+* [x] Generate prediction intervals from dropout sampling
+* [x] Compare MC Dropout vs ensemble uncertainty estimates — MC Dropout PICP 0.938 but MPIW ~36x wider
+* [x] Analyze uncertainty calibration (reliability diagrams)
+* [x] Evaluate high-uncertainty prediction correlation with errors — weak for both (0.15 / 0.04)
 
-**Autoregressive Predictions**:
-* [ ] Implement autoregressive forecasting loop (t+1 → t+2 → ... → t+N)
-* [ ] Extend forecast horizon to 14-day and 30-day
-* [ ] Compare autoregressive vs Seq2Seq multi-step predictions
-* [ ] Analyze error accumulation over extended horizons
+**Extended-Horizon Seq2Seq** (dedicated direct model per horizon, no autoregression, no shared
+MIMO output — see Phase 4.1 Component 3):
+* [ ] Train dedicated `forecast_horizon=14` model
+* [ ] Train dedicated `forecast_horizon=30` model
+* [ ] Build the skill-decay curve (1/7/14/30-day) and find the zero-skill crossover lead time
+* [ ] Analyze error growth over extended horizons
 * [ ] Document uncertainty growth with forecast lead time
 
 **Enhanced Encoder-Decoder**:
@@ -431,6 +569,16 @@ data is auto-bootstrapped via `src/data_bootstrap.ensure_extent_data()`.
 * [ ] Test bidirectional encoder architecture
 * [ ] Multi-horizon outputs (7-day, 14-day, 30-day)
 * [ ] Analyze attention weights for temporal dependencies
+
+**Predictive VAE** (Variational Seq2Seq — see Phase 4.1 Component 5 for full spec):
+* [ ] Fix `load_checkpoint` model-class dispatch (currently hardcodes `IceExtentLSTM`)
+* [ ] Implement `src/vae_utils.py`: `PredictiveVAE` model, ELBO loss, KL annealing, `train_vae`,
+  `sample_futures`
+* [ ] Train 14-day model with KL annealing; verify no posterior collapse (`kl_loss` not ~0)
+* [ ] Point-forecast evaluation in `07_model_comparison.ipynb`'s table
+* [ ] Probabilistic comparison vs 09 (ensemble) and 10 (MC Dropout): PICP/MPIW @ 90%, reliability
+  diagram, `corr(uncertainty, |error|)`
+* [ ] Extend to 30-day only once 14-day is stable and calibration results are sane
 
 **M6 – Advanced Features**
 
@@ -533,11 +681,29 @@ data is auto-bootstrapped via `src/data_bootstrap.ensure_extent_data()`.
 
 11. **07\_model\_comparison.ipynb** (Completed — self-updating)
     * Reads `results/model_comparison.csv` → ranked comparison table per scale
-    * Regenerates daily 1-step predictions from every checkpoint bundle in `models/`
-    * **Diebold-Mariano significance** vs persistence & climatology (added to `evaluation_utils`)
-    * Skill-score chart + seasonal breakdown of the best daily model
-    * Laptop result: univariate LSTM beats persistence significantly (DM ≈ -9.4, p ≈ 0);
-      rerun on the GPU box and the 05/06 rows fill in automatically
+    * Regenerates daily 1-step predictions from every checkpoint bundle in `models/` that shares
+      the fixed 2020-2023 test era (excludes 08's per-fold bundles by design — see below)
+    * **Diebold-Mariano significance** vs persistence & climatology, **Holm-Bonferroni** correction
+      across the full family of tests once more than one bundle is present (both in
+      `evaluation_utils`)
+    * Skill-score chart, seasonal breakdown, and per-year error breakdown of the best daily model
+    * Laptop result: every univariate LSTM variant beats persistence significantly except MC
+      Dropout (DM ≈ -9.4 to -16.9, p ≈ 0, survives Holm-Bonferroni); best daily model is
+      `09_ensemble_seed8` (RMSE 0.0593). 2020 flagged as the highest-error test year, independently
+      confirmed by notebook 08's backtest. Rerun on the GPU box and the 05/06 rows fill in
+      automatically.
+
+13. **08\_time\_series\_backtesting.ipynb** (Completed, univariate)
+    * Expanding-window cross-validation: 5 folds (test years 2019-2023), each with its own 2-year
+      validation window and all prior history as training data
+    * Retrains the univariate architecture per fold, aggregates RMSE/skill with mean ± std
+    * **Result**: LSTM beats persistence in **5/5 folds** — RMSE 0.0623 ± 0.0102 vs persistence's
+      0.0882 ± 0.0036, skill +0.296 ± 0.088 (higher than the single fixed-split result in 04,
+      +0.168 — likely more training data per fold). 2020 is consistently the weakest fold.
+    * Caught and fixed a real methodology bug in `07_model_comparison.ipynb`: its checkpoint
+      auto-discovery originally re-evaluated these fold bundles on the shared 2020-2023 window,
+      silently reusing each fold's own validation years as test data. Fixed by excluding
+      `08_backtest_fold_*` bundles from 07's shared-test-era comparison by name.
 
 **Planned Notebooks** (Lower Priority)
 
@@ -546,33 +712,40 @@ data is auto-bootstrapped via `src/data_bootstrap.ensure_extent_data()`.
     * Multi-horizon predictions (+7, +14, +30 days)
     * Skill scores vs persistence and climatology
 
-13. **08\_time\_series\_backtesting.ipynb** (Planned)
-    * Expanding window cross-validation
-    * Retrain models on multiple time periods (2019, 2020, 2021, 2022, 2023 test folds)
-    * Aggregate metrics with confidence intervals
-    * Statistical significance testing across folds
+**Completed Notebooks** (Phase 4.1 - Uncertainty & Extended Horizons)
 
-**Planned Notebooks** (Phase 4.1 - Uncertainty & Extended Horizons)
-
-14. **09\_lstm\_ensemble.ipynb** (Planned)
+14. **09\_lstm\_ensemble.ipynb** (Completed, univariate)
     * Train 10 LSTM models with different random seeds
     * Ensemble prediction statistics (mean, std, percentiles)
     * Epistemic uncertainty analysis from ensemble spread
     * Comparison: ensemble mean vs best single model
     * Computational cost analysis
+    * **Result**: member RMSE 0.0602 ± 0.0004 (10 seeds converge to nearly the same function),
+      ensemble mean RMSE 0.0597, skill vs persistence +0.316. Ensemble beats a *typical* member
+      (DM p = 0.022) but not the single best member. **90% interval PICP only 0.170** — badly
+      overconfident, since epistemic spread across seeds is tiny relative to real error.
 
-15. **10\_mc\_dropout.ipynb** (Planned)
-    * Implement MC Dropout inference (50-100 forward passes)
+15. **10\_mc\_dropout.ipynb** (Completed, univariate)
+    * Implement MC Dropout inference (50-100 forward passes); added a `head_dropout` param to
+      `IceExtentLSTM` since between-layer LSTM dropout alone doesn't reach the output layer
     * Generate prediction intervals and uncertainty estimates
     * Reliability diagrams and calibration analysis
-    * Compare MC Dropout vs ensemble uncertainty
+    * Compare MC Dropout vs ensemble uncertainty (reuses 09's saved checkpoints, no retraining)
     * Correlation between uncertainty and prediction errors
+    * **Result**: `head_dropout=0.3` cost real point-forecast accuracy (RMSE 0.095, skill
+      **-0.089** vs persistence — not significant, DM p = 0.136). **90% interval PICP 0.938**
+      (much better covered than the ensemble) but **MPIW ~36x wider** — good coverage mostly from
+      being very wide, not precise calibration. Both methods' uncertainty correlates weakly with
+      actual error (0.15 / 0.04), suggesting the dominant error source here is aleatoric, not
+      epistemic — neither ensembling nor dropout targets that directly.
 
-16. **11\_autoregressive\_lstm.ipynb** (Planned)
-    * Autoregressive forecasting loop implementation
-    * Extended horizons: 14-day and 30-day predictions
-    * Error accumulation analysis over forecast lead time
-    * Comparison: autoregressive vs Seq2Seq approaches
+16. **11\_extended\_horizon\_seq2seq.ipynb** (Planned)
+    * Two dedicated direct models, `forecast_horizon=14` and `forecast_horizon=30`, each trained
+      end-to-end for its own horizon (not one shared-output model sliced afterward — see Phase 4.1
+      Component 3 for the direct-vs-MIMO reasoning; also no autoregressive rollout, same section)
+    * Skill-decay curve across 1/7/14/30-day lead times (stitching in 04's 1-day and 06's 7-day
+      results), and the lead time where skill vs persistence/climatology crosses zero
+    * Error growth analysis over forecast lead time
     * Uncertainty growth with horizon length
 
 17. **12\_attention\_seq2seq.ipynb** (Planned)
@@ -582,28 +755,37 @@ data is auto-bootstrapped via `src/data_bootstrap.ensure_extent_data()`.
     * Multi-horizon outputs (7-day, 14-day, 30-day)
     * Attention weight visualization and interpretation
 
+18. **13\_predictive\_vae.ipynb** (Planned)
+    * Variational Seq2Seq: LSTM encoder → `(mu, logvar)` → reparameterized `z` → LSTM decoder,
+      autoregressive over the known future day-of-year (see Phase 4.1 Component 5 for the full
+      architecture, ELBO loss, KL-annealing plan, and infra prerequisites)
+    * Point forecast from `mu`; probabilistic ensemble from N samples of `z`
+    * Three-way calibration comparison against 09 (ensemble) and 10 (MC Dropout) using the same
+      `picp`/`mpiw`/reliability-diagram harness
+    * Target: 14-day first (reusing 11's dedicated-horizon setup), 30-day only once stable
+
 **Planned Notebooks** (Phase 6 - CNN-LSTM)
 
-18. **13\_era5\_spatial\_preprocessing.ipynb** (Planned)
+19. **14\_era5\_spatial\_preprocessing.ipynb** (Planned)
     * Download gridded ERA5 data (T2M, MSLP, SST, SIC)
     * Regrid to Arctic Stereographic (EPSG:3411)
     * Downsample to 64×64 and 128×128 grids
     * Create multi-channel image sequences
     * Save to zarr/HDF5 format
 
-19. **14\_cnn\_encoder.ipynb** (Planned)
+20. **15\_cnn\_encoder.ipynb** (Planned)
     * CNN spatial encoder implementation (ResNet/VGG-style)
     * Feature extraction from gridded weather data
     * Optional pre-training on auxiliary task
     * Spatial feature visualization
 
-20. **15\_cnn\_lstm\_hybrid.ipynb** (Planned)
+21. **16\_cnn\_lstm\_hybrid.ipynb** (Planned)
     * Full CNN-LSTM pipeline: spatial encoding + temporal modeling
     * Hybrid architecture (CNN features + tabular features)
     * Multi-horizon prediction variants
     * Training with gradient checkpointing
 
-21. **16\_cnn\_lstm\_evaluation.ipynb** (Planned)
+22. **17\_cnn\_lstm\_evaluation.ipynb** (Planned)
     * Performance comparison vs aggregated-feature LSTM
     * Ablation studies (CNN-only, tabular-only, hybrid)
     * Spatial resolution impact (64×64 vs 128×128)
@@ -635,9 +817,11 @@ data is auto-bootstrapped via `src/data_bootstrap.ensure_extent_data()`.
 * ✅ Univariate LSTM (04) evaluated vs baselines on the held-out test set (beats persistence)
 * ✅ Seasonal performance breakdown (winter vs summer) for 04
 * ⏳ Multivariate (05) & seq2seq (06) evaluated — refactored, pending GPU-box run
-* ⏳ All models on one table with significance testing (Diebold-Mariano) — `07_model_comparison.ipynb`
-* ⏳ Feature validation via ablation studies (05 variants loop provides the comparison)
-* ⏳ Time-series backtesting framework applied to LSTMs (pending)
+* ✅ All models on one table with significance testing (Diebold-Mariano + Holm-Bonferroni) —
+  `07_model_comparison.ipynb` (univariate family; 05/06 rows pending GPU-box run)
+* ⏳ Feature validation via ablation studies (05 variants loop provides the comparison, pending GPU-box run)
+* ✅ Time-series backtesting framework applied to LSTMs — `08_time_series_backtesting.ipynb`,
+  5-fold expanding window, univariate model beats persistence in 5/5 folds
 * ⏳ Comprehensive evaluation documentation (pending)
 
 **Documentation** (Completed - NEW):
@@ -646,14 +830,19 @@ data is auto-bootstrapped via `src/data_bootstrap.ensure_extent_data()`.
 * ✅ Data dictionary updated with technical specifications
 * ✅ Project plan updated with implementation/validation status split
 
-**Uncertainty Quantification & Extended Horizons** (Phase 4.1 - Planned):
-* ⏳ 10-model LSTM ensemble trained and evaluated (pending)
-* ⏳ MC Dropout implementation with uncertainty calibration analysis (pending)
-* ⏳ Autoregressive predictions for 14-day and 30-day horizons (pending)
+**Uncertainty Quantification & Extended Horizons** (Phase 4.1 - Components 1-2 done, univariate):
+* ✅ 10-model LSTM ensemble trained and evaluated — `09_lstm_ensemble.ipynb` (univariate; rerun on
+  05's best variant once available)
+* ✅ MC Dropout implementation with uncertainty calibration analysis — `10_mc_dropout.ipynb`
+  (univariate)
+* ⏳ Direct multi-horizon Seq2Seq extended to 14-day and 30-day (no autoregression) (pending)
 * ⏳ Enhanced encoder-decoder with attention mechanism (pending)
-* ⏳ Prediction interval coverage and sharpness metrics (pending)
-* ⏳ Error accumulation analysis for extended horizons (pending)
-* ⏳ Uncertainty vs error correlation analysis (pending)
+* ✅ Prediction interval coverage and sharpness metrics — `picp`/`mpiw` in `evaluation_utils`;
+  ensemble badly overconfident (PICP 0.17 @ 90%), MC Dropout well-covered but very wide (PICP 0.94,
+  MPIW ~36x the ensemble's)
+* ⏳ Error accumulation analysis for extended horizons (pending — needs Component 3)
+* ✅ Uncertainty vs error correlation analysis — weak for both methods (MC Dropout 0.15, ensemble
+  0.04), suggesting error here is mostly aleatoric rather than epistemic
 
 **Spatial-Temporal CNN-LSTM** (Phase 6 - Planned):
 * ⏳ Gridded ERA5 data preprocessing pipeline (Arctic Stereographic) (pending)

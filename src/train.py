@@ -50,6 +50,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--layers", type=int, default=2)
     p.add_argument("--dropout", type=float, default=0.2)
+    p.add_argument("--head-dropout", type=float, default=0.0,
+                   help="dropout before the output layer; set > 0 for MC Dropout inference")
     p.add_argument("--cyclical", action="store_true", help="add sin/cos day-of-year features")
     # Optimization.
     p.add_argument("--epochs", type=int, default=150)
@@ -79,6 +81,7 @@ def main(argv=None) -> None:
     config = L.TrainConfig(
         sequence_length=args.seq_len, forecast_horizon=args.horizon,
         hidden_size=args.hidden, num_layers=args.layers, dropout=args.dropout,
+        head_dropout=args.head_dropout,
         batch_size=args.batch, num_epochs=args.epochs, learning_rate=args.lr,
         weight_decay=args.weight_decay, patience=args.patience, seed=args.seed,
         amp=args.amp, num_workers=args.num_workers, pin_memory=(device.type == "cuda"),
@@ -107,7 +110,7 @@ def main(argv=None) -> None:
     model = L.IceExtentLSTM(
         input_size=len(train_ds.features), hidden_size=config.hidden_size,
         num_layers=config.num_layers, forecast_horizon=config.forecast_horizon,
-        dropout=config.dropout,
+        dropout=config.dropout, head_dropout=config.head_dropout,
     )
     extra = {
         "scaler": train_ds.scaler, "features": train_ds.features, "target": "extent_mkm2",

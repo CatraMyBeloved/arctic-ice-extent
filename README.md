@@ -6,7 +6,7 @@ A learning-focused data science project exploring geospatial-temporal forecastin
 
 This project builds a complete pipeline for Arctic sea ice extent anomaly prediction, combining daily satellite observations with atmospheric reanalysis data. The primary goal is educational—understanding modern geospatial data workflows, spatial databases, and time series modeling—rather than production performance.
 
-**Current Status**: Data pipeline and EDA complete. SARIMA and LSTM models (univariate, multivariate, seq2seq) implemented and trained; evaluation framework (`src/evaluation_utils.py`) built. Next up: running the persistence/climatology baselines and a standardized cross-model comparison (denormalized to Mkm²).
+**Current Status**: Data pipeline and EDA complete. Baselines, SARIMA, and the univariate LSTM (plus its 10-seed ensemble, MC Dropout, and 5-fold expanding-window backtest) trained and evaluated with statistical significance testing (Diebold-Mariano + Holm-Bonferroni) in `07_model_comparison.ipynb` — the univariate LSTM significantly beats persistence at daily scale. Multivariate (05) and seq2seq (06) notebooks are refactored and ready, pending the ERA5 parquet store and a GPU-box run. Next up: uncertainty quantification on the multivariate variant, and direct multi-horizon (14/30-day) Seq2Seq extension.
 
 ## Key Features
 
@@ -103,7 +103,7 @@ This project systematically explores:
 - [x] **Phase 2**: Exploratory data analysis
 - [x] **Phase 3**: Baseline models (persistence, climatology, linear regression)
 - [x] **Phase 4**: Time series models with lagged features
-- [ ] **Phase 5**: LSTM experimentation (**IN PROGRESS**)
+- [ ] **Phase 5**: LSTM experimentation (**IN PROGRESS** — univariate model, its ensemble/MC Dropout/backtest done; multivariate/seq2seq pending GPU box)
 - [ ] **Phase 6**: Advanced CNN-LSTM spatial-temporal modeling
 
 See [docs/project_plan.md](docs/project_plan.md) for detailed milestones.
