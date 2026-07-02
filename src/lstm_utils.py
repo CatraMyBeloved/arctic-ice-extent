@@ -83,6 +83,7 @@ class TrainConfig:
     hidden_size: int = 64
     num_layers: int = 2
     dropout: float = 0.2
+    head_dropout: float = 0.0   # dropout right before the output layer; MC Dropout needs this > 0
     batch_size: int = 32
     num_epochs: int = 150
     learning_rate: float = 1e-3
@@ -230,6 +231,7 @@ class IceExtentLSTM(nn.Module):
         num_layers: int = 2,
         forecast_horizon: int = 1,
         dropout: float = 0.2,
+        head_dropout: float = 0.0,
     ):
         super().__init__()
         self.lstm = nn.LSTM(
@@ -239,11 +241,16 @@ class IceExtentLSTM(nn.Module):
             batch_first=True,
             dropout=dropout if num_layers > 1 else 0.0,
         )
+        # Between-layer LSTM dropout (above) is a no-op for num_layers=1 and, even with more
+        # layers, only touches the recurrent stack — not the final representation. head_dropout
+        # sits right before the output layer so MC Dropout (see mc_dropout_predict) has a real
+        # source of stochasticity regardless of num_layers.
+        self.head_dropout = nn.Dropout(head_dropout)
         self.fc = nn.Linear(hidden_size, forecast_horizon)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # (B, seq, feat) -> (B, horizon)
         out, _ = self.lstm(x)          # nn.LSTM initializes hidden state to zeros
-        return self.fc(out[:, -1, :])
+        return self.fc(self.head_dropout(out[:, -1, :]))
 
 
 # --------------------------------------------------------------------------- #
@@ -400,6 +407,7 @@ def load_checkpoint(
             num_layers=cfg.num_layers,
             forecast_horizon=cfg.forecast_horizon,
             dropout=cfg.dropout,
+            head_dropout=cfg.head_dropout,
         )
         model.load_state_dict(bundle["state_dict"])
         model.to(device).eval()
@@ -424,6 +432,51 @@ def predict(model: nn.Module, loader: torch.utils.data.DataLoader, device: torch
             preds.append(model(X).cpu().numpy())
             actuals.append(y.numpy())
     return np.concatenate(preds), np.concatenate(actuals)
+
+
+def enable_dropout(model: nn.Module) -> None:
+    """Put the model in eval mode but flip dropout layers back to train mode.
+
+    This is the standard MC Dropout trick: batchnorm-free models like ours have
+    no other reason to distinguish train/eval, so putting only ``nn.Dropout``
+    submodules in train mode keeps dropout stochastic at inference time.
+    """
+    model.eval()
+    for module in model.modules():
+        if isinstance(module, nn.Dropout):
+            module.train()
+
+
+def mc_dropout_predict(
+    model: nn.Module,
+    loader: torch.utils.data.DataLoader,
+    device: torch.device,
+    n_passes: int = 50,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Run ``n_passes`` stochastic forward passes with dropout active.
+
+    Requires a model trained with ``head_dropout > 0`` (or ``num_layers > 1``
+    and ``dropout > 0``) — otherwise every pass is identical and the spread
+    collapses to zero. Returns ``(preds, mean, actuals)`` where ``preds`` has
+    shape ``(n_passes, N, horizon)`` and ``mean``/``actuals`` have shape
+    ``(N, horizon)``; take ``preds.std(axis=0)`` for the per-point spread.
+    """
+    enable_dropout(model)
+    actuals = None
+    passes = []
+    with torch.no_grad():
+        for _ in range(n_passes):
+            batch_preds = []
+            batch_actuals = []
+            for X, y in loader:
+                X = X.to(device, non_blocking=True)
+                batch_preds.append(model(X).cpu().numpy())
+                batch_actuals.append(y.numpy())
+            passes.append(np.concatenate(batch_preds))
+            if actuals is None:
+                actuals = np.concatenate(batch_actuals)
+    preds = np.stack(passes, axis=0)  # (n_passes, N, horizon)
+    return preds, preds.mean(axis=0), actuals
 
 
 def denormalize(values: np.ndarray, mean: float, std: float) -> np.ndarray:
