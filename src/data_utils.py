@@ -34,7 +34,7 @@ ALL_REGIONS: List[str] = [
 ]
 
 # Public API exports
-__all__ = ['load_data', 'load_yearly_data_from_database', 'Region', 'get_available_regions', 'get_available_years']
+__all__ = ['load_data', 'load_extent_daily', 'load_yearly_data_from_database', 'Region', 'get_available_regions', 'get_available_years']
 
 
 def get_available_regions() -> List[str]:
@@ -98,6 +98,53 @@ def load_yearly_data_from_database(year: int, region: Optional[Region] = None) -
     df = pd.read_sql(query, engine, parse_dates=['date'])
 
     return df
+
+def load_extent_daily(
+    years: Union[int, List[int], range, Literal['all']] = 'all',
+    region: Region = 'pan_arctic',
+) -> pd.DataFrame:
+    """Load daily ice extent straight from the database, without ERA5 features.
+
+    Unlike :func:`load_data`, this does not require the ERA5 parquet files to be
+    present, so it works anywhere the Postgres database is available (e.g. the
+    CPU-only laptop). It returns a gap-filled daily series suitable for the
+    univariate LSTM and the baseline notebooks.
+
+    Args:
+        years: Year(s) to load ('all', a single int, a list, or a range).
+        region: Region to load (defaults to pan-Arctic).
+
+    Returns:
+        DataFrame with columns date, region, extent_mkm2 at daily resolution,
+        sorted by date with missing days linearly interpolated.
+    """
+    import sqlalchemy
+
+    engine = sqlalchemy.create_engine(DATABASE_URL)
+
+    if region == 'pan_arctic':
+        table = 'ice_extent_pan_arctic_daily'
+        query = f"SELECT date, region, extent_mkm2 FROM {table}"
+    else:
+        table = 'ice_extent_regional_daily'
+        query = f"SELECT date, region, extent_mkm2 FROM {table} WHERE region = '{region}'"
+
+    df = pd.read_sql(query, engine, parse_dates=['date'])
+
+    if years != 'all':
+        if isinstance(years, int):
+            years = [years]
+        years = set(years)
+        df = df[df['date'].dt.year.isin(years)]
+
+    if df.empty:
+        raise ValueError(f"No extent data found for region '{region}', years {years}")
+
+    df = df.sort_values(['date', 'region']).reset_index(drop=True)
+    df = _interpolate_missing_dates(df)
+
+    return df
+
 
 def _load_data_for_year(year: int, region: Region) -> pd.DataFrame:
     """Internal helper: Load and merge ERA5 atmospheric data with sea ice extent for a year and region.

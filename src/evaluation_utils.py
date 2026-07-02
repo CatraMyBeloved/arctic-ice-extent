@@ -218,6 +218,115 @@ def compute_anomaly_correlation(y_true: np.ndarray,
     return np.corrcoef(anomaly_true, anomaly_pred)[0, 1]
 
 
+def diebold_mariano_test(y_true: np.ndarray,
+                         y_pred_a: np.ndarray,
+                         y_pred_b: np.ndarray,
+                         h: int = 1,
+                         power: int = 2) -> Tuple[float, float]:
+    """Diebold-Mariano test for equal predictive accuracy of two forecasts.
+
+    Tests the null hypothesis that forecasts A and B have equal accuracy against
+    the alternative that they differ. Uses the Harvey-Leybourne-Newbold small-
+    sample correction. A negative statistic means A has the smaller loss (A is
+    better); the p-value says whether the difference is significant.
+
+    Args:
+        y_true: Observed values.
+        y_pred_a: First model's forecasts (aligned with y_true).
+        y_pred_b: Second (benchmark) model's forecasts.
+        h: Forecast horizon (steps ahead); controls the autocovariance lags used.
+        power: Loss power (2 = squared error, 1 = absolute error).
+
+    Returns:
+        (dm_statistic, p_value) using a two-sided Student-t reference with n-1 df.
+        stat < 0 -> A better than B; p < 0.05 -> difference is significant.
+    """
+    from scipy import stats as _stats
+
+    y_true = np.asarray(y_true, dtype=float)
+    e_a = np.abs(y_true - np.asarray(y_pred_a, dtype=float)) ** power
+    e_b = np.abs(y_true - np.asarray(y_pred_b, dtype=float)) ** power
+    d = e_a - e_b
+    n = len(d)
+
+    d_mean = d.mean()
+    # Long-run variance using autocovariances up to lag h-1.
+    gamma0 = np.mean((d - d_mean) ** 2)
+    gamma = [np.mean((d[k:] - d_mean) * (d[:-k] - d_mean)) for k in range(1, h)]
+    var_d = (gamma0 + 2 * np.sum(gamma)) / n
+    if var_d <= 0:
+        return float("nan"), float("nan")
+
+    dm = d_mean / np.sqrt(var_d)
+    # Harvey-Leybourne-Newbold small-sample correction.
+    correction = np.sqrt((n + 1 - 2 * h + h * (h - 1) / n) / n)
+    dm *= correction
+    p_value = 2 * _stats.t.cdf(-abs(dm), df=n - 1)
+    return float(dm), float(p_value)
+
+
+def holm_bonferroni(p_values: Dict[str, float], alpha: float = 0.05) -> pd.DataFrame:
+    """Holm-Bonferroni correction for a family of pairwise significance tests.
+
+    Once more than two models are compared (e.g. several DM tests against a
+    common baseline, or all pairwise combinations), testing each pair at the
+    nominal alpha inflates the family-wise false-positive rate. Holm-Bonferroni
+    controls it by testing the smallest p-value against alpha/m, the next
+    smallest against alpha/(m-1), and so on — less conservative than plain
+    Bonferroni (alpha/m for every test) while still guaranteeing the same
+    family-wise error bound.
+
+    Args:
+        p_values: Mapping from a comparison label (e.g. "LSTM vs persistence")
+            to its raw p-value.
+        alpha: Family-wise significance level.
+
+    Returns:
+        DataFrame sorted by ascending p-value with columns ``comparison``,
+        ``p_value``, ``threshold`` (the per-step alpha/(m-rank+1) cutoff) and
+        ``significant`` (bool). Holm's step-down procedure stops rejecting as
+        soon as one comparison fails its threshold, so ``significant`` is False
+        for that comparison and everything after it even if a later raw
+        p-value happens to be smaller than its own threshold.
+    """
+    m = len(p_values)
+    ordered = sorted(p_values.items(), key=lambda kv: kv[1])
+
+    rows = []
+    still_significant = True
+    for rank, (label, p) in enumerate(ordered, start=1):
+        threshold = alpha / (m - rank + 1)
+        if still_significant and p <= threshold:
+            significant = True
+        else:
+            significant = False
+            still_significant = False
+        rows.append({"comparison": label, "p_value": p, "threshold": threshold,
+                     "significant": significant})
+    return pd.DataFrame(rows)
+
+
+def picp(y_true: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> float:
+    """Prediction Interval Coverage Probability: fraction of ``y_true`` inside [lower, upper].
+
+    Compare against the interval's nominal confidence level (e.g. a 90%
+    interval should have PICP close to 0.90). Well below nominal means the
+    interval is overconfident (too narrow); well above means overly cautious.
+    """
+    y_true, lower, upper = np.asarray(y_true), np.asarray(lower), np.asarray(upper)
+    return float(np.mean((y_true >= lower) & (y_true <= upper)))
+
+
+def mpiw(lower: np.ndarray, upper: np.ndarray) -> float:
+    """Mean Prediction Interval Width: average sharpness of the interval.
+
+    Sharpness only matters once coverage (see :func:`picp`) is adequate — a
+    wide-enough interval trivially achieves good coverage, so the two must be
+    read together.
+    """
+    return float(np.mean(np.asarray(upper) - np.asarray(lower)))
+
+
 def compute_all_metrics(y_true: np.ndarray,
                        y_pred: np.ndarray,
                        y_baseline_persistence: Optional[np.ndarray] = None,
