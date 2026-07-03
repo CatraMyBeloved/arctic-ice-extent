@@ -101,12 +101,11 @@ This project systematically explores:
 
 - [x] **Phase 0-1**: Data pipeline (NSIDC + ERA5 ingestion)
 - [x] **Phase 2**: Exploratory data analysis
-- [x] **Phase 3**: Baseline models (persistence, climatology, linear regression)
-- [x] **Phase 4**: Time series models with lagged features
-- [ ] **Phase 5**: LSTM experimentation (**IN PROGRESS** — univariate model, its ensemble/MC Dropout/backtest done; multivariate/seq2seq pending GPU box)
-- [ ] **Phase 6**: Advanced CNN-LSTM spatial-temporal modeling
+- [ ] **Phase 3**: Baselines (persistence, climatology, SARIMA done; simple ML — Ridge/RF/XGBoost — pending)
+- [ ] **Phase 4/4.1**: LSTM experiments (**IN PROGRESS** — univariate model, its 10-seed ensemble, MC Dropout, and 5-fold backtest done; multivariate/seq2seq pending GPU box; extended horizons + skill-decay curve next)
+- [ ] **Phase 6**: Spatial CNN-LSTM (stretch)
 
-See [docs/project_plan.md](docs/project_plan.md) for detailed milestones.
+See [docs/project_plan.md](docs/project_plan.md) for the prioritized roadmap (core path vs stretch) and [docs/results_log.md](docs/results_log.md) for findings so far.
 
 ## Data Sources
 
@@ -116,7 +115,11 @@ See [docs/project_plan.md](docs/project_plan.md) for detailed milestones.
 
 ## Documentation
 
-- [Project Plan](docs/project_plan.md) - Detailed phase breakdown and learning goals
+- [Project Plan](docs/project_plan.md) - Goals, status overview, prioritized roadmap
+- [Results Log](docs/results_log.md) - Findings per experiment, negative results, bugs caught, lessons
+- [Experiment Designs](docs/experiment_designs.md) - Scoped specs for planned experiments (E1-E8)
+- [Methodology](docs/methodology.md) - Data processing, architectures, split strategy
+- [Evaluation Methodology](docs/evaluation_methodology.md) - Metrics, baselines, backtesting protocol
 - [Data Dictionary](docs/data_dictionary.md) - Database schema and conventions
 - [Project Story](docs/project_story.md) - Background and motivation
 
