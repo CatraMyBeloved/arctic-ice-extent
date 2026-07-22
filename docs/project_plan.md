@@ -81,8 +81,10 @@ Status values: Completed / Refactored — pending GPU run / Planned (keep this c
 | `07_model_comparison` | Completed (self-updating) | Ranked table + DM significance from `results/model_comparison.csv` |
 | `08_time_series_backtesting` | Completed | 5-fold expanding window, univariate |
 | `09_lstm_ensemble` | Completed (univariate) | 10-seed ensemble + intervals; rerun on best 05 variant in **E2** |
+| `09b_multivariate_lstm_ensemble` | Refactored — pending GPU run (**E2**) | Multivariate (ERA5) 10-member ensemble; leakage-free 3-way split, logs to `model_comparison.csv` |
 | `10_mc_dropout` | Completed (univariate) | MC Dropout intervals; rerun on best 05 variant in **E2** |
-| `11_extended_horizon_seq2seq` | Planned (**E3**) | 14/30-day direct models, skill-decay curve |
+| `11a_recursive_multistep_baseline` | Refactored — pending GPU run | Recursive/autoregressive rollout + per-horizon skill decay; the naive foil to `11b` |
+| `11b_extended_horizon_seq2seq` | Planned (**E3**) | 14/30-day **direct** models, skill-decay curve |
 | `12_attention_seq2seq` | Planned, stretch (**E5**) | Attention, teacher forcing, bidirectional encoder vs vanilla |
 | `13_predictive_vae` | Planned, stretch (**E6**) | Variational seq2seq, three-way calibration comparison |
 | `14`–`17` (spatial CNN-LSTM) | Planned, stretch (**E8**) | Gridded ERA5 → CNN encoder → LSTM |
@@ -97,8 +99,9 @@ Full specs with scope boundaries: `experiment_designs.md`. Order within the core
    nets; does the LSTM beat Ridge/XGBoost?
 2. [ ] **E2 — GPU-box run**: 05/06 + 07 rerun + ensemble and MC Dropout reruns on the best
    variant; answers whether climate features move the 1-day noise floor.
-3. [ ] **E3 — Extended horizons** (`11`): dedicated 14/30-day direct models → the
-   **skill-decay curve** and zero-skill crossover. The project's headline figure.
+3. [ ] **E3 — Extended horizons** (`11b`): dedicated 14/30-day **direct** models → the
+   **skill-decay curve** and zero-skill crossover. The project's headline figure. (The recursive
+   baseline that motivates it already exists in `11a_recursive_multistep_baseline`.)
 4. [ ] **E4 — Objective-function experiments**: Step-0 extractability gate, then the gated
    subset of {differenced target, rate-of-change losses, distribution losses}; DILATE/soft-DTW
    as a follow-on if A/B show promise.
